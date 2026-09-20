@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OCaml in the browser (proof of concept)</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #1b1b1f;
+        --panel: #232329;
+        --border: #35353f;
+        --text: #e6e6e9;
+        --muted: #8b8b98;
+        --accent: #7aa2f7;
+        --err: #f7768e;
+        --out: #9ece6a;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 24px;
+        background: var(--bg);
+        color: var(--text);
+        font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      main { max-width: 900px; margin: 0 auto; }
+      h1 { font-size: 18px; margin: 0 0 4px; }
+      p.sub { color: var(--muted); margin: 0 0 20px; font-size: 13px; }
+      textarea {
+        width: 100%;
+        min-height: 260px;
+        padding: 12px;
+        background: var(--panel);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        font: 13px/1.5 ui-monospace, "SF Mono", Consolas, monospace;
+        resize: vertical;
+        tab-size: 2;
+      }
+      .row { display: flex; align-items: center; gap: 12px; margin: 12px 0; }
+      button {
+        padding: 8px 18px;
+        background: var(--accent);
+        color: #11121a;
+        border: 0;
+        border-radius: 6px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:disabled { opacity: 0.5; cursor: default; }
+      #status { color: var(--muted); font-size: 12px; }
+      #status.error { color: var(--err); }
+      #output {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 12px;
+        min-height: 90px;
+        font: 13px/1.5 ui-monospace, "SF Mono", Consolas, monospace;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      #output .placeholder { color: var(--muted); }
+      #output .result { color: var(--muted); }
+      #output .stdout { color: var(--out); }
+      #output .stderr { color: var(--err); }
+      kbd {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 1px 5px;
+        font-size: 11px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>OCaml in the browser</h1>
+      <p class="sub">
+        A real OCaml toplevel, compiled to JavaScript and running in a Web
+        Worker. Nothing is sent to a server.
+      </p>
+
+      <textarea id="code" spellcheck="false"></textarea>
+
+      <div class="row">
+        <button id="run">Run</button>
+        <span id="status">Loading the toplevel…</span>
+        <span style="color: var(--muted); font-size: 12px">
+          <kbd>Ctrl</kbd>+<kbd>Enter</kbd> to run
+        </span>
+      </div>
+
+      <div id="output"><span class="placeholder">Output appears here.</span></div>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

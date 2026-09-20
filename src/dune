@@ -1,0 +1,15 @@
+; The toplevel worker.
+;
+; Compiles to OCaml bytecode, which is then turned into JavaScript by
+; js_of_ocaml with the --toplevel flag (see ../Makefile).
+
+(executable
+ (name worker)
+ (modes byte)
+ (modules worker)
+ (libraries
+  js_of_ocaml
+  js_of_ocaml-toplevel
+  compiler-libs.common)
+ (link_flags
+  (-linkall)))

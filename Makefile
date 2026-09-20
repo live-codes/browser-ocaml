@@ -23,4 +23,4 @@ serve:
 	python -m http.server 8080 --directory web
 
 clean:
-	rm -rf _build web/worker.js web/stdlib export.txt
+	rm -rf _build web/worker.js web/stdlib web/libs export.txt

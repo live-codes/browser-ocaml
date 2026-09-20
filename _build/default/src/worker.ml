@@ -74,7 +74,78 @@ let read_cmi unit_name data =
   close_out oc;
   Cmi_format.read_cmi path
 
+(* ~~~ Libraries, loaded on demand ~~~
+
+   Third-party libraries are not linked into the toplevel. Each ships as a
+   .cma that Dynlink loads at runtime, plus its .cmi files for type-checking.
+
+   The trigger is the type-checker asking for one of those interfaces, which is
+   exactly "this code uses this library" -- and it happens before the phrase
+   runs, so loading there is early enough for the code to then execute. *)
+
+let library_manifest = "libs/manifest.txt"
+
+let libraries_loaded = Hashtbl.create 8
+let cmi_library = Hashtbl.create 32
+let library_archive = Hashtbl.create 8
+
+let load_library_manifest () =
+  match fetch library_manifest with
+  | None -> ()
+  | Some body ->
+      String.split_on_char '\n' body
+      |> List.filter (fun line -> line <> "")
+      |> List.iter (fun line ->
+             match String.split_on_char '\t' line with
+             | [ library; archive; cmis ] ->
+                 Hashtbl.replace library_archive library archive;
+                 String.split_on_char ',' cmis
+                 |> List.iter (fun cmi ->
+                        if cmi <> "" then
+                          Hashtbl.replace cmi_library
+                            (Filename.chop_extension cmi)
+                            library)
+             | _ -> ())
+
+(* Write the archive into the pseudo filesystem and Dynlink it -- the same thing
+   a local `#load "lib.cma"` does. A library that cannot load (C stubs, or an
+   ABI mismatch) must not take the run down, so failures are reported on stderr
+   and the type-checking that follows still happens. *)
+let load_library library =
+  if not (Hashtbl.mem libraries_loaded library) then
+    match Hashtbl.find_opt library_archive library with
+    | None -> ()
+    | Some archive -> (
+        match fetch (Filename.concat "libs" archive) with
+        | None ->
+            prerr_endline ("[library] could not fetch " ^ archive)
+        | Some data ->
+            let path = Filename.concat "/libs" archive in
+            let oc = open_out_bin path in
+            output_string oc data;
+            close_out oc;
+            (* Use the toplevel's own loader rather than [Dynlink.loadfile].
+               Dynlink refuses outright while [Sys.interactive] is set and,
+               even with that cleared, it registers the code without telling
+               the toplevel -- so later phrases still fail to link against the
+               unit. [Topdirs.dir_load] is what `#load` calls, and it does the
+               toplevel bookkeeping. *)
+            let interactive = !Sys.interactive in
+            Sys.interactive := false;
+            (try
+               Topdirs.dir_load Format.err_formatter path;
+               Hashtbl.replace libraries_loaded library ()
+             with
+            | Dynlink.Error e ->
+                prerr_endline
+                  ("[library] " ^ library ^ ": " ^ Dynlink.error_message e)
+            | e ->
+                prerr_endline
+                  ("[library] " ^ library ^ ": " ^ Printexc.to_string e));
+            Sys.interactive := interactive)
+
 let install_cmi_loader () =
+  load_library_manifest ();
   let available =
     List.map
       (fun cmi -> (Filename.chop_extension (Filename.basename cmi), cmi))
@@ -82,21 +153,37 @@ let install_cmi_loader () =
   in
   let open Persistent_env.Persistent_signature in
   let fallback = !load in
+  let signature unit_name path =
+    match fetch path with
+    | None -> None
+    | Some data ->
+        Some
+          {
+            filename = Sys.executable_name;
+            cmi = read_cmi unit_name data;
+            visibility = Load_path.Visible;
+          }
+  in
   load :=
     (fun ~allow_hidden ~unit_name ->
       let key = String.uncapitalize_ascii unit_name in
       match List.assoc_opt key available with
-      | None -> fallback ~allow_hidden ~unit_name
       | Some cmi -> (
-          match fetch (Filename.concat cmi_base cmi) with
-          | None -> fallback ~allow_hidden ~unit_name
-          | Some data ->
-              Some
-                {
-                  filename = Sys.executable_name;
-                  cmi = read_cmi unit_name data;
-                  visibility = Load_path.Visible;
-                }))
+          match signature unit_name (Filename.concat cmi_base cmi) with
+          | Some s -> Some s
+          | None -> fallback ~allow_hidden ~unit_name)
+      | None -> (
+          match Hashtbl.find_opt cmi_library key with
+          | Some library -> (
+              (* Asking for this interface is what "this code uses the
+                 library" means. *)
+              load_library library;
+              match
+                signature unit_name (Filename.concat "libs" (key ^ ".cmi"))
+              with
+              | Some s -> Some s
+              | None -> fallback ~allow_hidden ~unit_name)
+          | None -> fallback ~allow_hidden ~unit_name))
 
 (* ~~~ Exit codes ~~~
 

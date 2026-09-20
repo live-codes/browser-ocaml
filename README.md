@@ -75,6 +75,7 @@ LiveCodes language would have to fit:
 | stdin | yes — `read_line`, `input_line`, `read_int`, `Scanf` |
 | argv | yes — `Sys.argv`, and `Arg.parse` |
 | files | yes — in the pseudo filesystem, readable with `open_in` |
+| libraries | yes, lazily — a library's `.cma` is loaded the first time code names one of its modules |
 | JS interop | **no** — `Js`, `Dom_html`, `Js_of_ocaml` are all unbound |
 | DOM access | **no** — and structurally impossible in a worker (see below) |
 
@@ -142,6 +143,41 @@ prelude (`Arg.parse_argv_expand`, which does not exist) for a while.
 **Files.** Files are registered in js_of_ocaml's pseudo filesystem with
 `Sys_js.create_file` / `update_file`, so ordinary `open_in "data.txt"` finds
 them. Re-registering per run keeps contents current.
+
+**Libraries, loaded on demand.** Third-party libraries are not linked into the
+toplevel. Each is built to a `.cma` plus its `.cmi` files, listed in
+`libs/manifest.txt`, and fetched only when used.
+
+The trigger is the type-checker asking for one of the library's interfaces:
+that *is* "this code uses this library", and it happens before the phrase runs,
+so loading there is early enough. Verified behaviourally — with `greet.cma`
+removed from the server, a program that never mentions `Greet` still runs
+clean, while one that does reports `[library] could not fetch greet.cma` and
+fails; the worker survives either way.
+
+Getting the load to work needed three things, and two of them were not obvious:
+
+- Build with `--dynlink`, and link both `js_of_ocaml-compiler.dynlink` and
+  `dynlink`.
+- **`Dynlink.loadfile` is the wrong call in a toplevel.** It raises
+  `Invalid_argument "The dynlink.cma library cannot be used inside the OCaml
+  toplevel"` while `Sys.interactive` is set — which the toplevel sets, and
+  which `initialize` sets too. Clearing `Sys.interactive` around the load
+  silences that, but is not sufficient on its own.
+- Even with that cleared, `Dynlink.loadfile` registers the code without telling
+  the toplevel, so later phrases still fail with `Reference to undefined
+  compilation unit`. The loader that does the toplevel bookkeeping is
+  **`Topdirs.dir_load`** — what `#load` calls. That is what works.
+
+**What "auto-discovered" does and does not mean here.** `gen_libs.sh` walks
+`libs-src/*/`, compiles each directory to a `.cma` and its `.cmi` files, and
+writes the manifest — no per-library configuration. It does *not* yet enumerate
+the opam switch; that is the obvious next step, and it comes with a hard
+filter: most opam packages cannot run in a browser at all (C stubs, `Unix`,
+threads), and js_of_ocaml compatibility is a per-package property. So
+discovery has to be paired with a compatibility check, and something still has
+to compile each library for the browser once. "No pre-building" is achievable
+in the sense of no per-library manual step — not in the sense of no build.
 
 **Why there is no JS interop.** Two independent reasons:
 
@@ -304,10 +340,15 @@ baseline a Wasm-backed language support would impose on LiveCodes.
 5. **Consider a worker timeout.** An infinite loop in the user's code will hang
    the worker forever. LiveCodes will want to terminate and respawn it, the way
    the playground does with its timeout container.
-6. **Close the remaining local-dev gaps, if they matter.** The console, stdin,
-   argv, files, warnings and exit codes now behave like a local script run.
-   What still does not: **no opam libraries** (only stdlib plus the four extras
-   in `gen_stdlib.sh`) — the biggest gap, and architectural; **no project
-   shape** (one script, not `dune-project` + modules), inherent to a toplevel;
-   and no `#use`-style multi-file assembly. Worth deciding deliberately rather
-   than drifting into it.
+6. **Enumerate the opam switch.** `gen_libs.sh` builds whatever sits in
+   `libs-src/`; the next step is to discover the installed packages instead of
+   listing directories, and to filter them to what can actually run in a
+   browser — no C stubs, no `Unix`, no threads. Expect that filter to reject
+   most of opam; the useful set is pure-OCaml libraries, plus those that ship
+   js_of_ocaml-compatible primitives. Also worth measuring: how long a `.cma`
+   takes to Dynlink, since that is now on the run path.
+7. **Close the remaining local-dev gaps, if they matter.** Console, stdin,
+   argv, files, warnings, exit codes and libraries now behave like a local
+   script run. What still does not: **no project shape** (one script, not
+   `dune-project` + modules), which is inherent to a toplevel, and no
+   `#use`-style multi-file assembly.

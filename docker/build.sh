@@ -18,6 +18,9 @@ opam exec -- js_of_ocaml --version
 echo "==> Collecting standard library interfaces into web/stdlib/"
 opam exec -- sh gen_stdlib.sh
 
+echo "==> Building libraries into web/libs/"
+opam exec -- sh gen_libs.sh
+
 echo "==> Listing the compilation units exported to the toplevel"
 opam exec -- jsoo_listunits -o export.txt stdlib
 
@@ -31,7 +34,10 @@ echo "==> Compiling bytecode to JavaScript (--toplevel, --no-cmis)"
 #
 # --no-cmis keeps the .cmi interfaces out of the bundle; the worker fetches
 # them from stdlib/ on demand, which is what makes the payload tractable.
-opam exec -- js_of_ocaml --toplevel --effects=cps \
+#
+# --dynlink enables Dynlink, so libraries can be loaded at runtime instead of
+# being linked in ahead of time.
+opam exec -- js_of_ocaml --toplevel --dynlink --effects=cps \
   --no-cmis \
   --export export.txt \
   _build/default/src/worker.bc \

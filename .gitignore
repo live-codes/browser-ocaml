@@ -1,2 +1,8 @@
+_build/
+export.txt
+web/worker.js
+web/worker.min.js
+web/stdlib/
+web/libs/
 .opam/
 *.install

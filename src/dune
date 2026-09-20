@@ -8,8 +8,10 @@
  (modes byte)
  (modules worker)
  (libraries
+  dynlink
   js_of_ocaml
   js_of_ocaml-toplevel
+  js_of_ocaml-compiler.dynlink
   compiler-libs.common)
  (link_flags
   (-linkall)))

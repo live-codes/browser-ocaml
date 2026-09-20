@@ -14,6 +14,7 @@
         --muted: #8b8b98;
         --accent: #7aa2f7;
         --err: #f7768e;
+        --warn: #e0af68;
         --out: #9ece6a;
       }
       * { box-sizing: border-box; }
@@ -38,6 +39,24 @@
         font: 13px/1.5 ui-monospace, "SF Mono", Consolas, monospace;
         resize: vertical;
         tab-size: 2;
+      }
+      textarea.stdin { min-height: 64px; }
+      #args {
+        width: 100%;
+        padding: 8px 12px;
+        background: var(--panel);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        font: 13px/1.5 ui-monospace, "SF Mono", Consolas, monospace;
+      }
+      .stdin-label {
+        display: block;
+        margin: 16px 0 6px;
+        color: var(--muted);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
       }
       .row { display: flex; align-items: center; gap: 12px; margin: 12px 0; }
       button {
@@ -66,6 +85,7 @@
       #output .result { color: var(--muted); }
       #output .stdout { color: var(--out); }
       #output .stderr { color: var(--err); }
+      #output .warning { color: var(--warn); }
       kbd {
         background: var(--panel);
         border: 1px solid var(--border);
@@ -84,6 +104,30 @@
       </p>
 
       <textarea id="code" spellcheck="false"></textarea>
+
+      <label class="stdin-label" for="stdin">stdin</label>
+      <textarea
+        id="stdin"
+        class="stdin"
+        spellcheck="false"
+        placeholder="Available to the program on stdin — read_line (), input_line stdin, read_int (), Scanf…"
+      ></textarea>
+
+      <label class="stdin-label" for="args">args</label>
+      <input
+        id="args"
+        type="text"
+        spellcheck="false"
+        placeholder="Command-line arguments, whitespace separated. Sys.argv.(0) is &quot;main.ml&quot;."
+      />
+
+      <label class="stdin-label" for="files">files</label>
+      <textarea
+        id="files"
+        class="stdin"
+        spellcheck="false"
+        placeholder="Start each file with --- and its name, then its contents.&#10;--- data.txt&#10;hello&#10;--- nums.txt&#10;1 2 3"
+      ></textarea>
 
       <div class="row">
         <button id="run">Run</button>

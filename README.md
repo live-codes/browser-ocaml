@@ -60,6 +60,104 @@ What was actually observed in the browser:
   js_of_ocaml's in-memory filesystem and calling the compiler's own
   `Cmi_format.read_cmi`.
 
+## Interoperability
+
+Measured against the running worker, not assumed. This is the surface a
+LiveCodes language would have to fit:
+
+| Capability | Status |
+| ---------- | ------ |
+| stdout | yes — `print_*` / `Printf`, captured separately |
+| stderr | yes — `prerr_*` / `Printf.eprintf`, captured separately |
+| compiler diagnostics | as text, with source locations, on stderr |
+| warnings | yes — shown, coloured apart from errors, exit code unaffected |
+| exit code | yes — see below |
+| stdin | yes — `read_line`, `input_line`, `read_int`, `Scanf` |
+| argv | yes — `Sys.argv`, and `Arg.parse` |
+| files | yes — in the pseudo filesystem, readable with `open_in` |
+| JS interop | **no** — `Js`, `Dom_html`, `Js_of_ocaml` are all unbound |
+| DOM access | **no** — and structurally impossible in a worker (see below) |
+
+Protocol: `postMessage({ code, input, args, files })` →
+`["result", exitCode, stdout, stderr, outcome]`, where `outcome` is the
+toplevel's own echo (`val x : int = 3`).
+
+**Exit codes.** js_of_ocaml does not implement `exit`, so user code calling it
+used to raise `Invalid_argument "Function 'exit' not implemented"`. `worker.ml`
+now shadows `exit` in a prelude that records the code in js_of_ocaml's
+in-memory filesystem and then raises. The file outlives the toplevel's own
+exception handling, so the code is read back directly instead of
+pattern-matching the printed exception, and the `Exception: Exit_code(n)` noise
+is stripped from the outcome.
+
+The code is `0` on success, the given code for an explicit `exit n`, and `1` if
+anything was reported on stderr or an exception escaped. That also replaced an
+earlier bug: the first version reported success by testing whether stderr was
+empty, so a runtime exception — which the toplevel prints into the *outcome*,
+not stderr — was reported as success.
+
+**Stdin.** js_of_ocaml leaves the `stdin` channel unbacked in a browser, so
+`input_line stdin` raised `Sys_error "EBADF: bad file descriptor, read"`.
+`Sys_js.set_channel_filler` backs the **real channel**, which is the important
+part: `read_line`, `input_line stdin`, `read_int` and `Scanf` all read the same
+channel, so they all work — including library code that reads stdin internally.
+Shadowing `input_line` in a prelude would only have covered direct calls from
+user code and left `read_int`/`Scanf` broken.
+
+Three details that matter, all of which cost real debugging time:
+
+- The filler must be registered **per run**, after the input is armed. The
+  runtime detaches it (`refill = null`) the first time it returns an empty
+  string — that is how a channel is told there is no more input — so
+  re-registering is what makes a second Run work.
+- **Input is normalised to end with a newline.** Otherwise the last line is
+  never terminated: the reader asks for another fill, gets `""`, the filler is
+  detached, and the runtime then falls back to the unbacked fd and raises
+  `EBADF` instead of reporting a clean EOF — the same symptom as before any of
+  this existed. It only affects readers that must see a terminator
+  (`input_line`, `read_line`); `Scanf.scanf "%d"` on bare digits is fine, which
+  is what made the bug look intermittent.
+- With the newline in place, EOF is correct: reading past the end raises
+  `End_of_file`, which is reported as exit code 1.
+
+**Warnings.** The interactive toplevel silences most warnings; a local build
+does not. `worker.ml` runs `#warnings "+a"` at start-up so they surface. They
+arrive on stderr in the same shape as errors, which is a trap: an earlier
+version treated any stderr output as failure, so a mere warning returned exit
+code 1 on a successful run. `execute` now tells them apart, and the page
+colours warnings amber rather than red.
+
+**argv.** `Sys.argv` is a value, not a ref, so it cannot be assigned. Shadowing
+the `Sys` module at the toplevel does work, and re-evaluating it per run is how
+the arguments change. `Arg.parse` reads `Stdlib.Sys.argv` from *inside* the
+`Arg` module and so does not see that shadow — hence shadowing `Arg` as well
+and routing `parse` / `parse_expand` through the argv-explicit entry points.
+`argv.(0)` is `"main.ml"`.
+
+The per-run setup is evaluated inside the captured window rather than before
+it. It originally ran beforehand, so when it failed to compile its error went
+into buffers that were then cleared — silent, and it hid a typo in this very
+prelude (`Arg.parse_argv_expand`, which does not exist) for a while.
+
+**Files.** Files are registered in js_of_ocaml's pseudo filesystem with
+`Sys_js.create_file` / `update_file`, so ordinary `open_in "data.txt"` finds
+them. Re-registering per run keeps contents current.
+
+**Why there is no JS interop.** Two independent reasons:
+
+1. The build uses `--export export.txt`, which exposes only the `stdlib`
+   findlib package to the toplevel. `Js`, `Dom_html` and even
+   `Js_of_ocaml.Worker` are therefore unbound to user code. Nothing about the
+   page or the JS environment is reachable today.
+2. The toplevel runs in a **Web Worker**, which has no `document` at all. Even
+   with the js_of_ocaml units exported, user code could only reach worker-scope
+   globals (`self`, `postMessage`, `fetch`, `importScripts`) — never the DOM.
+
+Also note: the js_of_ocaml ppx is not applied to code evaluated in the
+toplevel, so the idiomatic `##` / `##.` syntax fails with `"##" is not a valid
+value identifier`, even once the units are exported. Only the ppx-free
+`Js.Unsafe.*` API is usable as things stand.
+
 ## How it works
 
 There are two separate things people mean by "compile OCaml to the browser",
@@ -194,10 +292,11 @@ baseline a Wasm-backed language support would impose on LiveCodes.
    the step that makes it "OCaml (Wasm)".
 3. **Fit LiveCodes.** LiveCodes' WASM languages are "load a prebuilt toolchain
    from a CDN and run it in an iframe/worker". This PoC's `web/` is already
-   that shape: `worker.js`, `stdlib/`, and a page. The remaining work is
-   packaging those assets for the CDN, and mapping the Run/console output onto
-   LiveCodes' language API (`LanguageSpecs`, a compiler/worker entry, and the
-   `Run` hook).
+   that shape: `worker.js`, `stdlib/`, and a page. Exit codes, stdin, argv,
+   files, diagnostics and warnings all match the script-runner contract. The
+   remaining gap is the choice of whether to offer JS interop at all — which
+   for the DOM means moving the toplevel to the main thread or building a
+   postMessage bridge, and losing the ability to terminate a runaway program.
 4. **Decide the domain story.** The JS backend supports OCaml 5 multicore
    `Domain`s (that is why the official playground uses it); the Wasm backend
    does not. If LiveCodes wants `Domain.spawn` to work, the JS backend is the
@@ -205,3 +304,10 @@ baseline a Wasm-backed language support would impose on LiveCodes.
 5. **Consider a worker timeout.** An infinite loop in the user's code will hang
    the worker forever. LiveCodes will want to terminate and respawn it, the way
    the playground does with its timeout container.
+6. **Close the remaining local-dev gaps, if they matter.** The console, stdin,
+   argv, files, warnings and exit codes now behave like a local script run.
+   What still does not: **no opam libraries** (only stdlib plus the four extras
+   in `gen_stdlib.sh`) — the biggest gap, and architectural; **no project
+   shape** (one script, not `dune-project` + modules), inherent to a toplevel;
+   and no `#use`-style multi-file assembly. Worth deciding deliberately rather
+   than drifting into it.

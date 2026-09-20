@@ -6,11 +6,14 @@
 
    Message protocol (deliberately tiny -- see ../web/app.js):
 
-   - incoming: a plain string of OCaml source
+   - incoming: { code: <OCaml source>, input: <stdin>, args: [<string>],
+                 files: [{ name: <string>, content: <string> }] }
+                 args  command-line arguments; argv.(0) is "main.ml"
+                 files registered in the pseudo filesystem, so open_in finds them
    - outgoing: ["ready", banner]
-               ["result", ok, stdout, stderr, result]
-                 ok     "1" | "0"
-                 result the toplevel's own output, e.g. "- : int = 5" *)
+               ["result", exit_code, stdout, stderr, result]
+                 exit_code 0 on success, non-zero on failure
+                 result    the toplevel's own output, e.g. "- : int = 5" *)
 
 open Js_of_ocaml
 open Js_of_ocaml_toplevel
@@ -95,7 +98,154 @@ let install_cmi_loader () =
                   visibility = Load_path.Visible;
                 }))
 
+(* ~~~ Exit codes ~~~
+
+   js_of_ocaml does not implement [exit], so user code calling it raised
+   [Invalid_argument "Function 'exit' not implemented"]. We shadow it in a
+   prelude that writes the code into js_of_ocaml's in-memory filesystem and
+   then raises. The file outlives the toplevel's own exception handling, so
+   the code can be read back reliably -- rather than pattern-matching how the
+   exception happens to get printed. *)
+
+let exit_code_path = "/exit_code"
+
+let exit_prelude =
+  {|
+exception Exit_code of int
+let exit n =
+  let oc = open_out "/exit_code" in
+  output_string oc (string_of_int n);
+  close_out oc;
+  raise (Exit_code n)
+|}
+
+let starts_with prefix line = String.starts_with ~prefix line
+
+let has_exception text =
+  String.split_on_char '\n' text |> List.exists (starts_with "Exception:")
+
+(* Diagnostics and warnings share stderr. Only the ones shaped "Error..." mean
+   the run failed -- a warning must not, any more than a warning fails a local
+   build. *)
+let has_error text =
+  String.split_on_char '\n' text |> List.exists (starts_with "Error")
+
+let strip_exit_exception text =
+  String.split_on_char '\n' text
+  |> List.filter (fun line -> not (starts_with "Exception: Exit_code" line))
+  |> String.concat "\n"
+
+let take_exit_code () =
+  if not (Sys.file_exists exit_code_path) then None
+  else begin
+    let ic = open_in exit_code_path in
+    let code =
+      try int_of_string (String.trim (input_line ic)) with _ -> 1
+    in
+    close_in ic;
+    Sys.remove exit_code_path;
+    Some code
+  end
+
+(* ~~~ stdin ~~~
+
+   js_of_ocaml leaves [stdin] unbacked in a browser, so [input_line stdin] used
+   to fail with [EBADF]. [Sys_js.set_channel_filler] lets us back the real
+   channel, which is what makes this work properly: [read_line], [input_line],
+   [read_int], [Scanf] and [In_channel] all read the same channel, so they all
+   work -- including library code that reads stdin internally, which shadowing
+   [input_line] in a prelude would not have covered.
+
+   The filler hands over the whole input on the first fill and "" afterwards,
+   which is how the channel is told there is no more input. *)
+
+let stdin_data = ref ""
+let stdin_drained = ref true
+
+let stdin_filler () =
+  if !stdin_drained then ""
+  else begin
+    stdin_drained := true;
+    !stdin_data
+  end
+
+let set_stdin text =
+  (* A trailing newline matters. Without one the final line is never
+     terminated, so the reader asks for another fill, gets "", and the runtime
+     then detaches the filler (that is how a channel learns there is no more
+     input) and falls back to the unbacked fd -- which raises EBADF rather than
+     reporting a clean EOF. Normalising here makes the last line readable. *)
+  let text =
+    if String.length text = 0 || text.[String.length text - 1] = '\n' then text
+    else text ^ "\n"
+  in
+  stdin_data := text;
+  stdin_drained := false;
+  (* Register per run, once the input is armed. Re-registering each run is what
+     makes repeated runs work, since the runtime detaches the filler the first
+     time it returns an empty string. *)
+  Sys_js.set_channel_filler stdin stdin_filler
+
+(* ~~~ argv and files ~~~
+
+   Two more things a local build gives you that a bare toplevel does not. *)
+
+(* [Sys.argv] is a value, not a ref, so it cannot be assigned. Shadowing the
+   [Sys] module at the toplevel does work, and re-evaluating it per run is how
+   the arguments change. [Arg.parse] reads [Stdlib.Sys.argv] from inside the
+   [Arg] module, so it does not see the shadowed binding -- hence shadowing
+   [Arg] as well and routing it through [Arg.parse_argv]. *)
+let ocaml_string_literal s =
+  let b = Buffer.create (String.length s + 2) in
+  Buffer.add_char b '"';
+  String.iter
+    (fun c ->
+      match c with
+      | '"' -> Buffer.add_string b "\\\""
+      | '\\' -> Buffer.add_string b "\\\\"
+      | '\n' -> Buffer.add_string b "\\n"
+      | '\t' -> Buffer.add_string b "\\t"
+      | '\r' -> Buffer.add_string b "\\r"
+      | c when Char.code c < 32 || Char.code c > 126 ->
+          Buffer.add_string b (Printf.sprintf "\\%03d" (Char.code c))
+      | c -> Buffer.add_char b c)
+    s;
+  Buffer.add_char b '"';
+  Buffer.contents b
+
+let argv_prelude args =
+  let literals = String.concat "; " (List.map ocaml_string_literal args) in
+  Printf.sprintf
+    {|
+module Sys = struct
+  include Sys
+  let argv = [| %s |]
+end
+module Arg = struct
+  include Arg
+  let parse specs anon usage = parse_argv Sys.argv specs anon usage
+  let parse_expand specs anon usage =
+    let current = ref 0 in
+    let argv = ref Sys.argv in
+    let specs = ref specs in
+    parse_and_expand_argv_dynamic current argv specs anon usage
+end
+|}
+    literals
+
+(* Files are registered in js_of_ocaml's pseudo filesystem, so ordinary
+   [open_in "name"] finds them. Re-registering per run keeps content current. *)
+let set_files files =
+  List.iter
+    (fun (name, content) ->
+      if Sys.file_exists name then Sys_js.update_file ~name ~content
+      else Sys_js.create_file ~name ~content)
+    files
+
 (* ~~~ Toplevel ~~~ *)
+
+(* Setup phrases print their bindings; that noise is not the user's output. *)
+let silent_ppf = Format.formatter_of_buffer (Buffer.create 128)
 
 let initialize () =
   Clflags.no_check_prims := true;
@@ -104,18 +254,29 @@ let initialize () =
   Sys_js.set_channel_flusher stdout (Buffer.add_string stdout_buff);
   Sys_js.set_channel_flusher stderr (Buffer.add_string stderr_buff);
   Sys.interactive := false;
-  ignore (JsooTop.use Format.std_formatter "open Stdlib;;");
-  Sys.interactive := true
+  ignore (JsooTop.use silent_ppf "open Stdlib;;");
+  Sys.interactive := true;
+  ignore (JsooTop.use silent_ppf exit_prelude);
+  (* The interactive toplevel silences most warnings by default; a local build
+     does not. Turn them on to match, and note they arrive on stderr just like
+     errors -- which is why [execute] tells the two apart. *)
+  ignore (JsooTop.use silent_ppf "#warnings \"+a\";;")
 
-let execute phrase =
+(* [JsooTop.execute] returns [unit], and it swallows runtime exceptions into
+   the outcome rather than raising them. So the exit code is derived from what
+   it leaves behind: an explicit code from the [exit] prelude, otherwise a
+   failure if anything was reported on stderr or an exception was printed.
+
+   [setup] is evaluated inside the captured window rather than before it. It
+   used to run beforehand, which meant a setup that failed to compile reported
+   its error into buffers that were then cleared -- silently. *)
+let execute setup phrase =
   Buffer.clear stdout_buff;
   Buffer.clear stderr_buff;
   Buffer.clear code_buff;
   Buffer.clear result_buff;
-  (* [true] asks the toplevel to print the type/value of the phrase.
-     Note [JsooTop.execute] returns [unit] -- unlike [use], which returns a
-     [bool] but does not print values -- so success is inferred from whether
-     anything was reported on stderr. *)
+  let setup_ok = JsooTop.use silent_ppf setup in
+  (* [true] asks the toplevel to print the type/value of the phrase. *)
   JsooTop.execute true
     ~pp_code:code_ppf
     ~highlight_location:(fun _ -> ())
@@ -123,11 +284,19 @@ let execute phrase =
   Format.pp_print_flush code_ppf ();
   Format.pp_print_flush result_ppf ();
   Format.pp_print_flush Format.err_formatter ();
-  let stderr = Buffer.contents stderr_buff in
-  ( String.length stderr = 0,
-    Buffer.contents stdout_buff,
-    stderr,
-    Buffer.contents result_buff )
+  (* Make sure anything still sitting in the channels reaches the flushers. *)
+  flush stdout;
+  flush stderr;
+  let out_text = Buffer.contents stdout_buff in
+  let err_text = Buffer.contents stderr_buff in
+  let outcome = Buffer.contents result_buff in
+  match take_exit_code () with
+  | Some code -> (code, out_text, err_text, strip_exit_exception outcome)
+  | None ->
+      let failed =
+        (not setup_ok) || has_error err_text || has_exception outcome
+      in
+      ((if failed then 1 else 0), out_text, err_text, outcome)
 
 (* ~~~ Worker protocol ~~~ *)
 
@@ -136,16 +305,37 @@ let post msg =
     (Js.Unsafe.meth_call Js.Unsafe.global "postMessage"
        [| Js.Unsafe.inject msg |])
 
-let post_result ok out err res =
+let post_result exit_code out err res =
   post
     (Js.array
        [|
          Js.string "result";
-         Js.string (if ok then "1" else "0");
+         Js.string (string_of_int exit_code);
          Js.string out;
          Js.string err;
          Js.string res;
        |])
+
+(* Missing/undefined fields are treated as absent rather than crashing the
+   worker -- a malformed message should not take the toplevel down. *)
+let string_list_of_js value =
+  match Js.Optdef.to_option value with
+  | None -> []
+  | Some v -> Array.to_list (Js.to_array v) |> List.map Js.to_string
+
+let files_of_js value =
+  match Js.Optdef.to_option value with
+  | None -> []
+  | Some (arr : Js.Unsafe.any Js.js_array Js.t) ->
+      Array.to_list (Js.to_array arr)
+      |> List.map (fun item ->
+             ( Js.to_string (Js.Unsafe.get item "name"),
+               Js.to_string (Js.Unsafe.get item "content") ))
+
+let string_of_js_or value fallback =
+  match Js.Optdef.to_option value with
+  | None -> fallback
+  | Some v -> Js.to_string v
 
 let () =
   initialize ();
@@ -153,6 +343,16 @@ let () =
   Js.Unsafe.set Js.Unsafe.global "onmessage"
     (Js.Unsafe.inject
        (Js.wrap_callback (fun ev ->
-            let code = Js.to_string (Js.Unsafe.get ev "data") in
-            let ok, out, err, res = execute (code ^ "\n;;\n") in
-            post_result ok out err res)))
+            let data = Js.Unsafe.get ev "data" in
+            let code = string_of_js_or (Js.Unsafe.get data "code") "" in
+            let input = string_of_js_or (Js.Unsafe.get data "input") "" in
+            let args =
+              "main.ml" :: string_list_of_js (Js.Unsafe.get data "args")
+            in
+            let files = files_of_js (Js.Unsafe.get data "files") in
+            set_stdin input;
+            set_files files;
+            let exit_code, out, err, res =
+              execute (argv_prelude args) (code ^ "\n;;\n")
+            in
+            post_result exit_code out err res)))

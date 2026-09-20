@@ -11,17 +11,32 @@
                  args  command-line arguments; argv.(0) is "main.ml"
                  files registered in the pseudo filesystem, so open_in finds them
    - outgoing: ["ready", banner]
-               ["result", exit_code, stdout, stderr, result]
-                 exit_code 0 on success, non-zero on failure
-                 result    the toplevel's own output, e.g. "- : int = 5" *)
+               ["result", exit_code, stdout, stderr, outcome, output, diagnostics]
+                 exit_code    "0" | "1" | ... | "null" when the phrase never ran
+                 stderr       the program's own stderr, diagnostics removed
+                 outcome      the toplevel's own output, e.g. "val x : int = 3"
+                 output       stdout and stderr in the order they were flushed
+                 diagnostics  compiler errors and warnings, as text *)
 
 open Js_of_ocaml
 open Js_of_ocaml_toplevel
 
 let stdout_buff = Buffer.create 4096
 let stderr_buff = Buffer.create 4096
+(* stdout and stderr as one stream would have shown them. The two channels are
+   captured separately, so this is flush order rather than write order -- the
+   same caveat a stdio-buffered program has anyway. *)
+let output_buff = Buffer.create 8192
 let code_buff = Buffer.create 4096
 let result_buff = Buffer.create 4096
+
+let flush_stdout s =
+  Buffer.add_string stdout_buff s;
+  Buffer.add_string output_buff s
+
+let flush_stderr s =
+  Buffer.add_string stderr_buff s;
+  Buffer.add_string output_buff s
 
 let code_ppf = Format.formatter_of_buffer code_buff
 let result_ppf = Format.formatter_of_buffer result_buff
@@ -217,6 +232,37 @@ let has_exception text =
 let has_error text =
   String.split_on_char '\n' text |> List.exists (starts_with "Error")
 
+(* The toplevel routes compiler diagnostics and the program's own stderr to the
+   same channel. Separate them by shape: a diagnostic is a location line or an
+   Error/Warning/Alert line, plus the indented continuation lines belonging to
+   it. A program printing something shaped like a diagnostic is misclassified
+   -- the alternative is not offering the two apart at all. *)
+let is_diagnostic_start line =
+  List.exists
+    (fun prefix -> starts_with prefix line)
+    [ "Error"; "Warning"; "Alert"; "Line "; "File \"" ]
+
+let split_diagnostics text =
+  let diagnostic = ref [] and program = ref [] and in_diagnostic = ref false in
+  String.split_on_char '\n' text
+  |> List.iter (fun line ->
+         let indented = String.length line > 0 && line.[0] = ' ' in
+         if line = "" then
+           if !in_diagnostic then diagnostic := line :: !diagnostic
+           else program := line :: !program
+         else if is_diagnostic_start line then begin
+           in_diagnostic := true;
+           diagnostic := line :: !diagnostic
+         end
+         else if !in_diagnostic && indented then
+           diagnostic := line :: !diagnostic
+         else begin
+           in_diagnostic := false;
+           program := line :: !program
+         end);
+  ( String.concat "\n" (List.rev !diagnostic),
+    String.concat "\n" (List.rev !program) )
+
 let strip_exit_exception text =
   String.split_on_char '\n' text
   |> List.filter (fun line -> not (starts_with "Exception: Exit_code" line))
@@ -338,8 +384,8 @@ let initialize () =
   Clflags.no_check_prims := true;
   install_cmi_loader ();
   JsooTop.initialize ();
-  Sys_js.set_channel_flusher stdout (Buffer.add_string stdout_buff);
-  Sys_js.set_channel_flusher stderr (Buffer.add_string stderr_buff);
+  Sys_js.set_channel_flusher stdout flush_stdout;
+  Sys_js.set_channel_flusher stderr flush_stderr;
   Sys.interactive := false;
   ignore (JsooTop.use silent_ppf "open Stdlib;;");
   Sys.interactive := true;
@@ -360,6 +406,7 @@ let initialize () =
 let execute setup phrase =
   Buffer.clear stdout_buff;
   Buffer.clear stderr_buff;
+  Buffer.clear output_buff;
   Buffer.clear code_buff;
   Buffer.clear result_buff;
   let setup_ok = JsooTop.use silent_ppf setup in
@@ -376,14 +423,27 @@ let execute setup phrase =
   flush stderr;
   let out_text = Buffer.contents stdout_buff in
   let err_text = Buffer.contents stderr_buff in
+  let output = Buffer.contents output_buff in
   let outcome = Buffer.contents result_buff in
+  let diagnostics, program_err = split_diagnostics err_text in
   match take_exit_code () with
-  | Some code -> (code, out_text, err_text, strip_exit_exception outcome)
+  | Some code ->
+      ( Some code,
+        out_text,
+        program_err,
+        strip_exit_exception outcome,
+        output,
+        diagnostics )
   | None ->
-      let failed =
-        (not setup_ok) || has_error err_text || has_exception outcome
+      (* [None] means the phrase never ran, which is the case when it failed to
+         compile. A warning is not a failure, so only Error-shaped lines count. *)
+      let ran = setup_ok && not (has_error diagnostics) in
+      let code =
+        if not ran then None
+        else if has_exception outcome then Some 1
+        else Some 0
       in
-      ((if failed then 1 else 0), out_text, err_text, outcome)
+      (code, out_text, program_err, outcome, output, diagnostics)
 
 (* ~~~ Worker protocol ~~~ *)
 
@@ -392,37 +452,51 @@ let post msg =
     (Js.Unsafe.meth_call Js.Unsafe.global "postMessage"
        [| Js.Unsafe.inject msg |])
 
-let post_result exit_code out err res =
+let post_result exit_code out err res output diagnostics =
+  let code =
+    match exit_code with Some n -> string_of_int n | None -> "null"
+  in
   post
     (Js.array
        [|
          Js.string "result";
-         Js.string (string_of_int exit_code);
+         Js.string code;
          Js.string out;
          Js.string err;
          Js.string res;
+         Js.string output;
+         Js.string diagnostics;
        |])
 
 (* Missing/undefined fields are treated as absent rather than crashing the
-   worker -- a malformed message should not take the toplevel down. *)
+   worker -- a malformed message should not take the toplevel down, and
+   [Js.to_string] of an absent field does not fail cleanly. *)
+let string_of_js_or value fallback =
+  match Js.Optdef.to_option value with
+  | None -> fallback
+  | Some v -> Js.to_string v
+
 let string_list_of_js value =
   match Js.Optdef.to_option value with
   | None -> []
   | Some v -> Array.to_list (Js.to_array v) |> List.map Js.to_string
 
+(* Both spellings: this package's API says `contents`, matching its sibling
+   `@live-codes/clang-wasm`, while the worker's own protocol said `content`.
+   Accepting both keeps the two from having to agree by accident. *)
 let files_of_js value =
   match Js.Optdef.to_option value with
   | None -> []
   | Some (arr : Js.Unsafe.any Js.js_array Js.t) ->
       Array.to_list (Js.to_array arr)
       |> List.map (fun item ->
-             ( Js.to_string (Js.Unsafe.get item "name"),
-               Js.to_string (Js.Unsafe.get item "content") ))
-
-let string_of_js_or value fallback =
-  match Js.Optdef.to_option value with
-  | None -> fallback
-  | Some v -> Js.to_string v
+             let name = string_of_js_or (Js.Unsafe.get item "name") "" in
+             let contents =
+               match Js.Optdef.to_option (Js.Unsafe.get item "contents") with
+               | Some v -> Js.to_string v
+               | None -> string_of_js_or (Js.Unsafe.get item "content") ""
+             in
+             (name, contents))
 
 let () =
   initialize ();
@@ -439,7 +513,7 @@ let () =
             let files = files_of_js (Js.Unsafe.get data "files") in
             set_stdin input;
             set_files files;
-            let exit_code, out, err, res =
+            let exit_code, out, err, res, output, diagnostics =
               execute (argv_prelude args) (code ^ "\n;;\n")
             in
-            post_result exit_code out err res)))
+            post_result exit_code out err res output diagnostics)))

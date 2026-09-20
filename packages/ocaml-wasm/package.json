@@ -1,0 +1,30 @@
+{
+  "name": "@live-codes/ocaml-wasm",
+  "version": "0.1.0",
+  "description": "Run OCaml in the browser - a real OCaml toplevel compiled to JavaScript, with no server",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "bin": {
+    "ocaml-wasm-copy-assets": "./bin/copy-assets.mjs"
+  },
+  "files": [
+    "src",
+    "bin",
+    "assets",
+    "README.md",
+    "THIRD-PARTY-NOTICES.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "ocaml",
+    "wasm",
+    "webassembly",
+    "toplevel",
+    "compiler",
+    "playground"
+  ]
+}

@@ -45,3 +45,13 @@ opam exec -- js_of_ocaml --toplevel --dynlink --effects=cps \
 
 echo "==> Done"
 ls -l web/worker.js
+
+# The package ships the same runtime as `assets/`, so that `copy-assets` has
+# something self-contained to publish.
+echo "==> Staging package assets"
+mkdir -p packages/ocaml-wasm/assets
+cp web/worker.js packages/ocaml-wasm/assets/
+rm -rf packages/ocaml-wasm/assets/stdlib packages/ocaml-wasm/assets/libs
+cp -r web/stdlib packages/ocaml-wasm/assets/
+cp -r web/libs packages/ocaml-wasm/assets/
+du -sh packages/ocaml-wasm/assets

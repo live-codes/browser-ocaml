@@ -6,9 +6,14 @@
 //                      args become Sys.argv (argv.(0) is "main.ml")
 //                      files are registered so open_in finds them
 //   worker -> page : postMessage(["ready", banner])
-//                    postMessage(["result", exitCode, stdout, stderr, result])
-//                      exitCode : 0 on success, non-zero on failure
-//                      result   : the toplevel's own echo, e.g. "- : int = 5"
+//                    postMessage(["result", exitCode, stdout, stderr, outcome,
+//                                  output, diagnostics])
+//                      exitCode : number as a string, or "null" if the code
+//                                 never ran (it did not compile)
+//                      stderr   : the program's own stderr
+//                      outcome  : the toplevel's own echo, e.g. "val x : int = 3"
+//                      output   : stdout and stderr in flush order
+//                      diagnostics : compiler errors and warnings
 
 const DEFAULT_CODE = `let rec fib n =
   if n < 2 then n else fib (n - 1) + fib (n - 2)
@@ -46,10 +51,14 @@ worker.addEventListener('message', (event) => {
   if (msg[0] === 'result') {
     running = false;
     runButton.disabled = false;
-    const exitCode = Number(msg[1]);
-    render(exitCode, msg[2], msg[3], msg[4]);
+    const exitCode = msg[1] === 'null' ? null : Number(msg[1]);
+    render(exitCode, msg[2], msg[3], msg[4], msg[6]);
     setStatus(
-      exitCode === 0 ? 'Done.' : `Exited with code ${exitCode}.`,
+      exitCode === null
+        ? 'Did not run — see the diagnostics.'
+        : exitCode === 0
+          ? 'Done.'
+          : `Exited with code ${exitCode}.`,
       exitCode !== 0,
     );
   }
@@ -66,7 +75,7 @@ function setStatus(text, isError) {
   status.classList.toggle('error', Boolean(isError));
 }
 
-function render(exitCode, stdout, stderr, result) {
+function render(exitCode, stdout, stderr, outcome, diagnostics) {
   const ok = exitCode === 0;
   const nodes = [];
   const add = (text, cls) => {
@@ -77,19 +86,21 @@ function render(exitCode, stdout, stderr, result) {
     nodes.push(span);
   };
 
-  // The toplevel's own output: the value of the phrase, or the error message.
-  add(result, ok ? 'result' : 'stderr');
+  // The toplevel's own output: the value of the phrase, or the exception raised.
+  add(outcome, ok ? 'result' : 'stderr');
 
-  // stderr carries both diagnostics and warnings. Colour them apart so a
-  // warning does not look like a failure, matching the exit code. A location
-  // line belongs to whatever diagnostic follows it.
-  const lines = stderr.split('\n').filter((line) => line !== '');
+  // Compiler diagnostics, with warnings coloured apart from errors so a warning
+  // does not look like a failure. A location line takes the severity of what
+  // follows it.
+  const lines = diagnostics.split('\n').filter((line) => line !== '');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const forSeverity = /^(Line|File|Characters)/.test(line) ? lines[i + 1] : line;
     add(line + '\n', /^Warning/.test(forSeverity ?? '') ? 'warning' : 'stderr');
   }
 
+  // Whatever the program wrote to stderr itself.
+  add(stderr, 'stderr');
   add(stdout, 'stdout');
 
   if (nodes.length === 0) {
@@ -112,10 +123,10 @@ const parseFiles = (text) => {
   for (const line of text.split('\n')) {
     const marker = /^---\s*(.+?)\s*$/.exec(line);
     if (marker) {
-      current = { name: marker[1], content: '' };
+      current = { name: marker[1], contents: '' };
       files.push(current);
     } else if (current) {
-      current.content += line + '\n';
+      current.contents += line + '\n';
     }
   }
   return files;

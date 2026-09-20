@@ -1,8 +1,9 @@
-_build/
-export.txt
-web/worker.js
-web/worker.min.js
-web/stdlib/
-web/libs/
+# _build/
+# export.txt
+# web/worker.js
+# web/worker.min.js
+# web/stdlib/
+# web/libs/
+# packages/ocaml-wasm/assets/
 .opam/
 *.install

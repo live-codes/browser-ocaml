@@ -1,14 +1,40 @@
 // One implementation behind the package entry point.
 //
-// The runtime is a Web Worker: the OCaml toplevel is compiled to JavaScript and
-// runs off the main thread, so a slow or runaway program cannot freeze the page.
-// Everything the caller needs - stdout, stderr, argv, stdin, files, exit code -
-// is a message to that worker.
+// There are two ways to run it, and the caller's situation decides which:
 //
-// Note there is no `node` entry point. The worker talks to the page through
-// `self.onmessage`/`postMessage`, which is the Web Worker API; Node's
-// worker_threads is a different interface, so this package is browser-only for
-// now rather than pretending otherwise.
+//  - If the runtime is already loaded in this context (a host that called
+//    `importScripts('worker.js')`, as LiveCodes' compiler worker would), it is
+//    used in place. A host that is already a worker should not start a nested
+//    one just to hold a runtime it could call directly.
+//  - Otherwise a worker is started for you, for standalone use where nobody
+//    else owns the message loop.
+//
+// `baseUrl` is what makes the first case work: the runtime cannot discover
+// where its assets are once it has been imported into someone else's worker,
+// so it is told rather than left to infer.
+
+const shape = (raw, runMs) => {
+	const failed = raw.exitCode === null;
+	const lines = raw.diagnostics ? raw.diagnostics.split('\n').filter(Boolean) : [];
+	return {
+		stdout: raw.stdout,
+		stderr: raw.stderr,
+		output: raw.output,
+		diagnostics: lines,
+		// Empty on success, so `errors.length` is a reliable failure test. Warnings
+		// from a successful run are in `diagnostics`, not here.
+		errors: failed ? lines : [],
+		exitCode: failed ? null : Number(raw.exitCode),
+		outcome: raw.outcome,
+		// A runtime failure (a missing asset, a failed start) rather than the
+		// program's diagnostics. Null when nothing went wrong at that level.
+		error: raw.error ?? null,
+		runMs
+	};
+};
+
+const absolute = (baseUrl) =>
+	new URL(baseUrl, globalThis.location?.href ?? 'http://localhost/').href;
 
 export function createApi() {
 	/**
@@ -18,10 +44,11 @@ export function createApi() {
 	 * @param {string|URL} options.baseUrl - where the runtime assets are served from. Required:
 	 *   the assets ship in this package but a page cannot read them off disk, so they have to be
 	 *   published somewhere fetchable (see `ocaml-wasm-copy-assets`).
+	 * @param {object} [options.runtime] - an already-loaded `self.ocamlWasm` to use in place,
+	 *   instead of starting a worker. Defaults to one already present in this context.
 	 * @param {string[]} [options.args] - default program argv. `Sys.argv.(0)` is `"main.ml"`.
 	 * @param {{name: string, contents: string}[]} [options.files] - default files, written into the
 	 *   runtime's filesystem so `open_in "name"` finds them.
-	 * @returns {Promise<{run: Function, banner: string, dispose: Function}>}
 	 */
 	async function createCompiler(options = {}) {
 		const { baseUrl, args: defaultArgs = [], files: defaultFiles = [] } = options;
@@ -33,7 +60,40 @@ export function createApi() {
 			);
 		}
 
-		const workerUrl = new URL('worker.js', baseUrl);
+		const resolvedBase = absolute(baseUrl);
+		let disposed = false;
+
+		const runtime = options.runtime ?? globalThis.ocamlWasm;
+		if (runtime) {
+			runtime.setBaseUrl(resolvedBase);
+			runtime.init();
+			return {
+				banner: 'in-thread',
+				/** Run a program in this context. Synchronous underneath; the Promise is for parity. */
+				run(code, input = '', runOptions = {}) {
+					if (disposed) return Promise.reject(new Error('This compiler has been disposed.'));
+					if (typeof code !== 'string') {
+						return Promise.reject(
+							new Error('run() needs the program source as its first argument.')
+						);
+					}
+					const started = performance.now();
+					// `run` does not throw: a failure comes back as `error`.
+					const raw = runtime.run({
+						code,
+						input,
+						args: runOptions.args ?? defaultArgs,
+						files: runOptions.files ?? defaultFiles
+					});
+					return Promise.resolve(shape(raw, performance.now() - started));
+				},
+				dispose() {
+					disposed = true;
+				}
+			};
+		}
+
+		const workerUrl = new URL('worker-entry.js', resolvedBase);
 		const worker = new Worker(workerUrl);
 
 		// `ready` is posted once the toplevel has initialised, so a bad baseUrl fails here rather
@@ -59,7 +119,6 @@ export function createApi() {
 		// One toplevel, one environment: runs share it, so they are serialised rather than
 		// interleaved. A queued run still resolves - it just waits.
 		let queue = Promise.resolve();
-		let disposed = false;
 
 		/**
 		 * Run a program.
@@ -68,12 +127,8 @@ export function createApi() {
 		 * @param {string} [input] - stdin, handed to the program once and then closed.
 		 * @param {object} [runOptions] - per-run overrides: `args`, `files`.
 		 * @returns {Promise<{stdout: string, stderr: string, output: string, diagnostics: string[],
-		 *   errors: string[], exitCode: number|null, outcome: string, runMs: number}>}
-		 *   `stderr` is what the program itself wrote to stderr. `diagnostics` holds the compiler's
-		 *   errors and warnings; `errors` holds them only when the program failed to compile, so
-		 *   `errors.length` is a reliable failure test and warnings still reach `diagnostics`.
-		 *   `exitCode` is null when the program never ran. `outcome` is the toplevel's own output
-		 *   (`val x : int = 3`), which a compiled program would not print.
+		 *   errors: string[], exitCode: number|null, outcome: string, error: string|null,
+		 *   runMs: number}>}
 		 */
 		function run(code, input = '', runOptions = {}) {
 			if (disposed) return Promise.reject(new Error('This compiler has been disposed.'));
@@ -90,18 +145,12 @@ export function createApi() {
 							if (!message || message[0] !== 'result') return;
 							worker.removeEventListener('message', onMessage);
 							const [, exitCode, stdout, stderr, outcome, output, diagnostics] = message;
-							const failed = exitCode === 'null';
-							const lines = diagnostics ? diagnostics.split('\n').filter(Boolean) : [];
-							resolve({
-								stdout,
-								stderr,
-								output,
-								diagnostics: lines,
-								errors: failed ? lines : [],
-								exitCode: failed ? null : Number(exitCode),
-								outcome,
-								runMs: performance.now() - started
-							});
+							resolve(
+								shape(
+									{ exitCode, stdout, stderr, outcome, output, diagnostics, error: null },
+									performance.now() - started
+								)
+							);
 						};
 						worker.addEventListener('message', onMessage);
 						worker.postMessage({

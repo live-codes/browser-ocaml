@@ -4,19 +4,23 @@
    OCaml playground (ocaml.org/play): compiler-libs' toplevel, driven through
    [Js_of_ocaml_toplevel.JsooTop].
 
-   Message protocol (deliberately tiny -- see ../web/app.js):
+   Host API -- the runtime is a library, not a worker. It defines
+   [self.ocamlWasm] and never touches [onmessage], so a host that is already a
+   worker keeps its own protocol:
 
-   - incoming: { code: <OCaml source>, input: <stdin>, args: [<string>],
-                 files: [{ name: <string>, content: <string> }] }
-                 args  command-line arguments; argv.(0) is "main.ml"
-                 files registered in the pseudo filesystem, so open_in finds them
-   - outgoing: ["ready", banner]
-               ["result", exit_code, stdout, stderr, outcome, output, diagnostics]
-                 exit_code    "0" | "1" | ... | "null" when the phrase never ran
-                 stderr       the program's own stderr, diagnostics removed
-                 outcome      the toplevel's own output, e.g. "val x : int = 3"
-                 output       stdout and stderr in the order they were flushed
-                 diagnostics  compiler errors and warnings, as text *)
+     self.ocamlWasm.init()                            idempotent, also implicit
+     self.ocamlWasm.run({ code, input, args, files }) -> result
+     self.ocamlWasm.setBaseUrl(url)                   where the assets are
+     self.ocamlWasm.setReader(fn url -> string|null)   a synchronous asset reader
+
+   [run] returns { exitCode, stdout, stderr, output, outcome, diagnostics,
+   error }, where exitCode is null when the phrase never ran. [error] carries a
+   runtime failure (a missing asset, a failed start) rather than a program's
+   diagnostics, and is null otherwise. [run] does not throw: a failure has to
+   reach the caller rather than vanish into an event handler.
+
+   ../web/worker-entry.js is a message-loop adapter for hosts that do not
+   already have one, and is the only place the postMessage protocol exists. *)
 
 open Js_of_ocaml
 open Js_of_ocaml_toplevel
@@ -55,7 +59,11 @@ let result_ppf = Format.formatter_of_buffer result_buff
 let cmi_base = "stdlib"
 let cmi_manifest = "stdlib/units.txt"
 
-let fetch url =
+(* Assets are read synchronously because the compiler asks for them from inside
+   the type-checker, where there is nothing to await. The default reader is a
+   synchronous XHR, which is browser-only; anywhere else the host installs its
+   own with [set_reader] -- Node, for instance, reads with [fs.readFileSync]. *)
+let xhr_reader url =
   let x = XmlHttpRequest.create () in
   ignore (Js.Unsafe.set x "responseType" (Js.string "arraybuffer"));
   ignore
@@ -72,6 +80,24 @@ let fetch url =
       (fun () -> None)
       (fun buf -> Some (Typed_array.String.of_arrayBuffer buf))
   else None
+
+let reader : (string -> string option) ref = ref xhr_reader
+
+let set_reader f = reader := f
+
+(* Assets are named relatively ("stdlib/units.txt"). Resolving them against
+   whatever script happens to be current only works when the runtime is served
+   alongside its assets -- it breaks the moment a host loads the runtime with
+   `importScripts` from somewhere else. So the base is explicit, and a host that
+   cannot be inferred from sets it: `createCompiler({ baseUrl })`,
+   [self.ocamlWasm.setBaseUrl], or the adapter using its own location. *)
+let asset_base = ref ""
+
+let set_base_url url =
+  asset_base :=
+    if url = "" || url.[String.length url - 1] = '/' then url else url ^ "/"
+
+let fetch url = !reader (!asset_base ^ url)
 
 let cmi_names () =
   match fetch cmi_manifest with
@@ -445,31 +471,20 @@ let execute setup phrase =
       in
       (code, out_text, program_err, outcome, output, diagnostics)
 
-(* ~~~ Worker protocol ~~~ *)
+(* ~~~ Host API ~~~
 
-let post msg =
-  ignore
-    (Js.Unsafe.meth_call Js.Unsafe.global "postMessage"
-       [| Js.Unsafe.inject msg |])
+   The runtime deliberately does not own the message loop. A host that is
+   already a worker -- LiveCodes' compiler worker, for one -- has its own
+   protocol, and setting `onmessage` from here would take that over. So the
+   entry point is a plain global the host calls into directly, which also makes
+   this loadable with `importScripts` in a worker the host already has, and
+   runnable anywhere else that can supply an asset reader.
 
-let post_result exit_code out err res output diagnostics =
-  let code =
-    match exit_code with Some n -> string_of_int n | None -> "null"
-  in
-  post
-    (Js.array
-       [|
-         Js.string "result";
-         Js.string code;
-         Js.string out;
-         Js.string err;
-         Js.string res;
-         Js.string output;
-         Js.string diagnostics;
-       |])
+   Initialisation is lazy so a host can install a reader first, and so loading
+   the bundle costs nothing until something runs. *)
 
 (* Missing/undefined fields are treated as absent rather than crashing the
-   worker -- a malformed message should not take the toplevel down, and
+   runtime -- a malformed payload should not take the toplevel down, and
    [Js.to_string] of an absent field does not fail cleanly. *)
 let string_of_js_or value fallback =
   match Js.Optdef.to_option value with
@@ -481,9 +496,9 @@ let string_list_of_js value =
   | None -> []
   | Some v -> Array.to_list (Js.to_array v) |> List.map Js.to_string
 
-(* Both spellings: this package's API says `contents`, matching its sibling
-   `@live-codes/clang-wasm`, while the worker's own protocol said `content`.
-   Accepting both keeps the two from having to agree by accident. *)
+(* Both spellings: the package's API says `contents`, matching its sibling
+   `@live-codes/clang-wasm`, while this protocol first said `content`. Accepting
+   both keeps the two from having to agree by accident. *)
 let files_of_js value =
   match Js.Optdef.to_option value with
   | None -> []
@@ -498,22 +513,80 @@ let files_of_js value =
              in
              (name, contents))
 
-let () =
-  initialize ();
-  post (Js.array [| Js.string "ready"; Js.string "Toplevel ready." |]);
-  Js.Unsafe.set Js.Unsafe.global "onmessage"
-    (Js.Unsafe.inject
-       (Js.wrap_callback (fun ev ->
-            let data = Js.Unsafe.get ev "data" in
-            let code = string_of_js_or (Js.Unsafe.get data "code") "" in
-            let input = string_of_js_or (Js.Unsafe.get data "input") "" in
-            let args =
-              "main.ml" :: string_list_of_js (Js.Unsafe.get data "args")
-            in
-            let files = files_of_js (Js.Unsafe.get data "files") in
-            set_stdin input;
-            set_files files;
-            let exit_code, out, err, res, output, diagnostics =
-              execute (argv_prelude args) (code ^ "\n;;\n")
-            in
-            post_result exit_code out err res output diagnostics)))
+let initialized = ref false
+
+let ensure_initialized () =
+  if not !initialized then begin
+    initialize ();
+    initialized := true
+  end
+
+let result_object ?error exit_code out err outcome output diagnostics =
+  let open Js.Unsafe in
+  obj
+    [|
+      ( "exitCode",
+        match exit_code with
+        | Some n -> inject (Js.number_of_float (float_of_int n))
+        | None -> inject Js.null );
+      ("stdout", inject (Js.string out));
+      ("stderr", inject (Js.string err));
+      ("output", inject (Js.string output));
+      ("outcome", inject (Js.string outcome));
+      ("diagnostics", inject (Js.string diagnostics));
+      (* The runtime's own failure, as opposed to the program's diagnostics. *)
+      ( "error",
+        match error with
+        | Some message -> inject (Js.string message)
+        | None -> inject Js.null );
+    |]
+
+(* Never throws and never hangs. A failure to start, or a missing asset, has to
+   reach the caller: it goes in `error`, and also in the diagnostics, so a null
+   exit code still carries an explanation and nothing fails silently. *)
+let run_payload payload =
+  try
+    ensure_initialized ();
+    let code = string_of_js_or (Js.Unsafe.get payload "code") "" in
+    let input = string_of_js_or (Js.Unsafe.get payload "input") "" in
+    let args = "main.ml" :: string_list_of_js (Js.Unsafe.get payload "args") in
+    let files = files_of_js (Js.Unsafe.get payload "files") in
+    set_stdin input;
+    set_files files;
+    let exit_code, out, err, outcome, output, diagnostics =
+      execute (argv_prelude args) (code ^ "\n;;\n")
+    in
+    result_object exit_code out err outcome output diagnostics
+  with e ->
+    let message = Printexc.to_string e in
+    result_object ~error:message None "" "" "" "" message
+
+(* A host elsewhere supplies its own synchronous reader. Returning null means
+   "not found", which is how a missing asset is reported rather than thrown. *)
+let set_reader_from_js read url =
+  match
+    Js.Optdef.to_option
+      (Js.Unsafe.fun_call read [| Js.Unsafe.inject (Js.string url) |])
+  with
+  | None -> None
+  | Some v -> Some (Js.to_string v)
+
+let install_host_api () =
+  let open Js.Unsafe in
+  set global "ocamlWasm"
+    (inject
+       (obj
+          [|
+            ("init", inject (Js.wrap_callback (fun () -> ensure_initialized ())));
+            ("run", inject (Js.wrap_callback run_payload));
+            ( "setBaseUrl",
+              inject
+                (Js.wrap_callback (fun url -> set_base_url (Js.to_string url)))
+            );
+            ( "setReader",
+              inject
+                (Js.wrap_callback (fun read ->
+                     set_reader (set_reader_from_js read))) );
+          |]))
+
+let () = install_host_api ()

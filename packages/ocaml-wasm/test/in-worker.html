@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>@live-codes/ocaml-wasm — in an existing worker</title>
+    <style>
+      body { font: 14px/1.5 ui-monospace, Consolas, monospace; background: #1b1b1f; color: #e6e6e9; padding: 24px; }
+      pre { background: #232329; border: 1px solid #35353f; border-radius: 8px; padding: 12px; white-space: pre-wrap; }
+      h1 { font-size: 16px; }
+    </style>
+  </head>
+  <body>
+    <h1>importScripts into a worker the host already owns</h1>
+    <p>
+      No nested worker and no postMessage from the runtime: the host worker keeps
+      its own protocol and calls <code>self.ocamlWasm.run()</code> directly.
+    </p>
+    <pre id="log">running…</pre>
+
+    <script type="module">
+      const log = document.getElementById('log');
+      const lines = [];
+      const say = (text) => {
+        lines.push(text);
+        log.textContent = lines.join('\n');
+      };
+
+      const results = {};
+      window.__check = results;
+
+      let nextId = 1;
+      const worker = new Worker('./host-worker.js');
+
+      const ready = new Promise((resolve) => {
+        const onMessage = (event) => {
+          if (event.data && event.data.type === 'host-ready') {
+            worker.removeEventListener('message', onMessage);
+            worker.removeEventListener('error', onError);
+            clearTimeout(timer);
+            resolve({ ok: true });
+          }
+        };
+        const onError = (event) => {
+          worker.removeEventListener('message', onMessage);
+          clearTimeout(timer);
+          // A worker that dies on load is otherwise completely silent.
+          resolve({ ok: false, error: `${event.message} @ ${event.filename}:${event.lineno}` });
+        };
+        const timer = setTimeout(() => {
+          worker.removeEventListener('message', onMessage);
+          resolve({ ok: false, error: 'host worker did not become ready' });
+        }, 20000);
+        worker.addEventListener('message', onMessage);
+        worker.addEventListener('error', onError);
+      });
+
+      const compile = (payload) =>
+        new Promise((resolve) => {
+          const id = nextId++;
+          const onMessage = (event) => {
+            const message = event.data;
+            if (!message || message.type !== 'compile-ocaml-result' || message.id !== id) return;
+            clearTimeout(timer);
+            worker.removeEventListener('message', onMessage);
+            resolve(message);
+          };
+          // Bounded, so a hang shows up as a failure rather than as nothing.
+          const timer = setTimeout(() => {
+            worker.removeEventListener('message', onMessage);
+            resolve({ timedOut: true });
+          }, 15000);
+          worker.addEventListener('message', onMessage);
+          worker.postMessage({ type: 'compile-ocaml', id, payload });
+        });
+
+      const report = (label, result) => {
+        results[label] = result;
+        say(
+          result.timedOut
+            ? `${label} -> TIMED OUT`
+            : `${label} -> exitCode=${result.exitCode} stdout=${JSON.stringify(result.stdout)}` +
+                (result.error ? ` error=${JSON.stringify(result.error)}` : '') +
+                (result.errors.length ? ` errors=${JSON.stringify(result.errors)}` : '')
+        );
+      };
+
+      try {
+        const hostReady = await ready;
+        if (!hostReady.ok) {
+          results.error = hostReady.error;
+          results.done = true;
+          say(`FAILED: ${hostReady.error}`);
+          return;
+        }
+        say('host worker ready (its own protocol)');
+
+        const plain = await compile({ code: 'let () = print_endline "in the host worker"' });
+        report('plain', plain);
+
+        const withLib = await compile({
+          code: 'let () = print_endline (Greet.hello (read_line ()))',
+          input: 'host',
+        });
+        report('library+stdin', withLib);
+
+        const bad = await compile({ code: 'let x : int = "nope"' });
+        report('compile error', bad);
+
+        const missing = await compile({ code: 'let () = print_endline Greet.hello' });
+        report('uses library again', missing);
+
+        worker.terminate();
+        results.done = true;
+        say('done');
+      } catch (err) {
+        results.error = String((err && err.message) || err);
+        results.done = true;
+        say(`FAILED: ${results.error}`);
+      }
+    </script>
+  </body>
+</html>

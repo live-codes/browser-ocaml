@@ -51,6 +51,9 @@ ls -l web/worker.js
 echo "==> Staging package assets"
 mkdir -p packages/ocaml-wasm/assets
 cp web/worker.js packages/ocaml-wasm/assets/
+# The message-loop adapter: the runtime itself is a library, so standalone
+# hosts need this small shim, while a host that already owns a worker does not.
+cp web/worker-entry.js packages/ocaml-wasm/assets/
 rm -rf packages/ocaml-wasm/assets/stdlib packages/ocaml-wasm/assets/libs
 cp -r web/stdlib packages/ocaml-wasm/assets/
 cp -r web/libs packages/ocaml-wasm/assets/

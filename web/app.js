@@ -37,7 +37,7 @@ editor.value = DEFAULT_CODE;
 let ready = false;
 let running = false;
 
-const worker = new Worker('./worker.js');
+const worker = new Worker('./worker-entry.js');
 
 worker.addEventListener('message', (event) => {
   const msg = event.data;

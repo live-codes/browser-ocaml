@@ -105,15 +105,36 @@ let cmi_names () =
   | Some body ->
       String.split_on_char '\n' body |> List.filter (fun line -> line <> "")
 
-(* Let the compiler parse the interface itself: write the bytes into
-   js_of_ocaml's in-memory filesystem and call its own reader, rather than
-   depending on the .cmi marshalled layout. *)
-let read_cmi unit_name data =
-  let path = Filename.concat "/cmi" (unit_name ^ ".cmi") in
-  let oc = open_out_bin path in
-  output_string oc data;
-  close_out oc;
-  Cmi_format.read_cmi path
+(* Parse the interface from the fetched bytes rather than staging it as a file.
+   The compiler's own reader wants a filename, but writing a byte string through
+   js_of_ocaml's Node filesystem re-encodes it as UTF-8 and corrupts the .cmi --
+   so the file route only ever worked in the browser. This is the same approach
+   the official OCaml playground takes. *)
+type cmi_header = string * Types.signature_item list
+type cmi_crcs = (string * Digest.t option) list
+type cmi_flags = Cmi_format.pers_flags list
+
+let input_cmi bytes =
+  let offset = 0 in
+  let header : cmi_header = Marshal.from_bytes bytes offset in
+  let offset = offset + Marshal.total_size bytes offset in
+  let crcs : cmi_crcs = Marshal.from_bytes bytes offset in
+  let offset = offset + Marshal.total_size bytes offset in
+  let flags : cmi_flags = Marshal.from_bytes bytes offset in
+  {
+    Cmi_format.cmi_name = fst header;
+    cmi_sign = snd header;
+    cmi_crcs = crcs;
+    cmi_flags = flags;
+  }
+
+let read_cmi data =
+  let magic = Config.cmi_magic_number in
+  let magic_len = String.length magic in
+  let bytes = Bytes.of_string data in
+  if Bytes.length bytes < magic_len || Bytes.sub_string bytes 0 magic_len <> magic
+  then raise (Cmi_format.Error (Cmi_format.Not_an_interface "<fetched>"));
+  input_cmi (Bytes.sub bytes magic_len (Bytes.length bytes - magic_len))
 
 (* ~~~ Libraries, loaded on demand ~~~
 
@@ -194,14 +215,14 @@ let install_cmi_loader () =
   in
   let open Persistent_env.Persistent_signature in
   let fallback = !load in
-  let signature unit_name path =
+  let signature path =
     match fetch path with
     | None -> None
     | Some data ->
         Some
           {
             filename = Sys.executable_name;
-            cmi = read_cmi unit_name data;
+            cmi = read_cmi data;
             visibility = Load_path.Visible;
           }
   in
@@ -210,7 +231,7 @@ let install_cmi_loader () =
       let key = String.uncapitalize_ascii unit_name in
       match List.assoc_opt key available with
       | Some cmi -> (
-          match signature unit_name (Filename.concat cmi_base cmi) with
+          match signature (Filename.concat cmi_base cmi) with
           | Some s -> Some s
           | None -> fallback ~allow_hidden ~unit_name)
       | None -> (
@@ -220,7 +241,7 @@ let install_cmi_loader () =
                  library" means. *)
               load_library library;
               match
-                signature unit_name (Filename.concat "libs" (key ^ ".cmi"))
+                signature (Filename.concat "libs" (key ^ ".cmi"))
               with
               | Some s -> Some s
               | None -> fallback ~allow_hidden ~unit_name)
@@ -483,13 +504,20 @@ let execute setup phrase =
    Initialisation is lazy so a host can install a reader first, and so loading
    the bundle costs nothing until something runs. *)
 
-(* Missing/undefined fields are treated as absent rather than crashing the
-   runtime -- a malformed payload should not take the toplevel down, and
-   [Js.to_string] of an absent field does not fail cleanly. *)
+(* JS has two absences and they are not interchangeable here: [Optdef] covers
+   undefined, but `null` is an ordinary value to it. A host naturally returns
+   `null` for "not found", so it needs its own test rather than being handed to
+   [Js.to_string], which would throw. Asking JS is simpler than the Opt/Optdef
+   type dance. *)
+let js_is_null = Js.Unsafe.js_expr "((v) => v === null)"
+
+let is_absent v =
+  Js.to_bool (Js.Unsafe.fun_call js_is_null [| Js.Unsafe.inject v |])
+
 let string_of_js_or value fallback =
   match Js.Optdef.to_option value with
   | None -> fallback
-  | Some v -> Js.to_string v
+  | Some v -> if is_absent v then fallback else Js.to_string v
 
 let string_list_of_js value =
   match Js.Optdef.to_option value with
@@ -561,15 +589,16 @@ let run_payload payload =
     let message = Printexc.to_string e in
     result_object ~error:message None "" "" "" "" message
 
-(* A host elsewhere supplies its own synchronous reader. Returning null means
-   "not found", which is how a missing asset is reported rather than thrown. *)
+(* A host elsewhere supplies its own synchronous reader. Absent is either
+   `undefined` or `null` -- a host naturally returns `null` for "not found", so
+   treating only `undefined` as absent would send `null` to [Js.to_string]. *)
 let set_reader_from_js read url =
   match
     Js.Optdef.to_option
       (Js.Unsafe.fun_call read [| Js.Unsafe.inject (Js.string url) |])
   with
   | None -> None
-  | Some v -> Some (Js.to_string v)
+  | Some v -> if is_absent v then None else Some (Js.to_string v)
 
 let install_host_api () =
   let open Js.Unsafe in

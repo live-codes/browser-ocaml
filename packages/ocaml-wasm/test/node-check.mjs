@@ -32,10 +32,11 @@ const runtime = globalThis.ocamlWasm;
 if (!runtime) throw new Error('the runtime did not install itself as self.ocamlWasm');
 
 runtime.setBaseUrl(assets.href);
+// Return bytes, not a string: `readFileSync` gives a Buffer, and a UTF-8
+// encoded byte string would corrupt the .cmi.
 runtime.setReader((url) => {
   try {
-    // latin1 so each char is one byte, which is how the runtime treats strings.
-    return readFileSync(fileURLToPath(url), 'latin1');
+    return readFileSync(fileURLToPath(url));
   } catch {
     return null;
   }
@@ -69,7 +70,7 @@ for (const [name, { _breakReader, ...payload }] of Object.entries(cases)) {
     // Put the real reader back so the summary is not misleading.
     runtime.setReader((url) => {
       try {
-        return readFileSync(fileURLToPath(url), 'latin1');
+        return readFileSync(fileURLToPath(url));
       } catch {
         return null;
       }

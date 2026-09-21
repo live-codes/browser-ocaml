@@ -62,7 +62,13 @@ let cmi_manifest = "stdlib/units.txt"
 (* Assets are read synchronously because the compiler asks for them from inside
    the type-checker, where there is nothing to await. The default reader is a
    synchronous XHR, which is browser-only; anywhere else the host installs its
-   own with [set_reader] -- Node, for instance, reads with [fs.readFileSync]. *)
+   own with [set_reader] -- Node, for instance, reads with [fs.readFileSync].
+
+   The reader returns **bytes**, not a string, and that is not a style choice.
+   Assets are binary: a .cmi payload starts with bytes above 127, and
+   [Js.to_string] encodes as UTF-8, so a byte string with the high bit set comes
+   back mangled and the compiler reports a corrupt interface. Typed arrays cross
+   the boundary intact. *)
 let xhr_reader url =
   let x = XmlHttpRequest.create () in
   ignore (Js.Unsafe.set x "responseType" (Js.string "arraybuffer"));
@@ -78,10 +84,10 @@ let xhr_reader url =
     Js.Opt.case
       (File.CoerceTo.arrayBuffer (Js.Unsafe.get x "response"))
       (fun () -> None)
-      (fun buf -> Some (Typed_array.String.of_arrayBuffer buf))
+      (fun buf -> Some (Typed_array.Bytes.of_arrayBuffer buf))
   else None
 
-let reader : (string -> string option) ref = ref xhr_reader
+let reader : (string -> bytes option) ref = ref xhr_reader
 
 let set_reader f = reader := f
 
@@ -103,7 +109,8 @@ let cmi_names () =
   match fetch cmi_manifest with
   | None -> []
   | Some body ->
-      String.split_on_char '\n' body |> List.filter (fun line -> line <> "")
+      String.split_on_char '\n' (Bytes.to_string body)
+      |> List.filter (fun line -> line <> "")
 
 (* Parse the interface from the fetched bytes rather than staging it as a file.
    The compiler's own reader wants a filename, but writing a byte string through
@@ -128,10 +135,9 @@ let input_cmi bytes =
     cmi_flags = flags;
   }
 
-let read_cmi data =
+let read_cmi bytes =
   let magic = Config.cmi_magic_number in
   let magic_len = String.length magic in
-  let bytes = Bytes.of_string data in
   if Bytes.length bytes < magic_len || Bytes.sub_string bytes 0 magic_len <> magic
   then raise (Cmi_format.Error (Cmi_format.Not_an_interface "<fetched>"));
   input_cmi (Bytes.sub bytes magic_len (Bytes.length bytes - magic_len))
@@ -155,7 +161,7 @@ let load_library_manifest () =
   match fetch library_manifest with
   | None -> ()
   | Some body ->
-      String.split_on_char '\n' body
+      String.split_on_char '\n' (Bytes.to_string body)
       |> List.filter (fun line -> line <> "")
       |> List.iter (fun line ->
              match String.split_on_char '\t' line with
@@ -182,9 +188,15 @@ let load_library library =
         | None ->
             prerr_endline ("[library] could not fetch " ^ archive)
         | Some data ->
-            let path = Filename.concat "/libs" archive in
+            (* Relative, for the same reason as the .cmi staging and the exit
+               code file: an absolute path needs a device mounted at the root,
+               which Node's filesystem does not provide. [Topdirs.dir_load]
+               resolves the same relative path. *)
+            let path = Filename.concat "ocaml-wasm-libs" archive in
+            if not (Sys.file_exists "ocaml-wasm-libs") then
+              (try Sys.mkdir "ocaml-wasm-libs" 0o755 with Sys_error _ -> ());
             let oc = open_out_bin path in
-            output_string oc data;
+            output_bytes oc data;
             close_out oc;
             (* Use the toplevel's own loader rather than [Dynlink.loadfile].
                Dynlink refuses outright while [Sys.interactive] is set and,
@@ -256,17 +268,22 @@ let install_cmi_loader () =
    the code can be read back reliably -- rather than pattern-matching how the
    exception happens to get printed. *)
 
-let exit_code_path = "/exit_code"
+(* Relative, for the same reason the .cmi staging is: an absolute path only
+   resolves where a device is mounted at the root, which the browser filesystem
+   does and Node's does not. It is removed again as soon as it is read. *)
+let exit_code_path = "ocaml-wasm-exit"
 
 let exit_prelude =
-  {|
+  Printf.sprintf
+    {|
 exception Exit_code of int
 let exit n =
-  let oc = open_out "/exit_code" in
+  let oc = open_out %S in
   output_string oc (string_of_int n);
   close_out oc;
   raise (Exit_code n)
 |}
+    exit_code_path
 
 let starts_with prefix line = String.starts_with ~prefix line
 
@@ -413,13 +430,16 @@ end
 |}
     literals
 
-(* Files are registered in js_of_ocaml's pseudo filesystem, so ordinary
-   [open_in "name"] finds them. Re-registering per run keeps content current. *)
+(* Files are registered by writing them, rather than with [Sys_js.create_file]:
+   that only registers into js_of_ocaml's own filesystem, so it fails where the
+   real one is mounted instead (Node). Writing works in both, and [open_out_bin]
+   truncates, so re-registering per run keeps content current. *)
 let set_files files =
   List.iter
-    (fun (name, content) ->
-      if Sys.file_exists name then Sys_js.update_file ~name ~content
-      else Sys_js.create_file ~name ~content)
+    (fun (name, contents) ->
+      let oc = open_out_bin name in
+      output_string oc contents;
+      close_out oc)
     files
 
 (* ~~~ Toplevel ~~~ *)
@@ -589,16 +609,22 @@ let run_payload payload =
     let message = Printexc.to_string e in
     result_object ~error:message None "" "" "" "" message
 
-(* A host elsewhere supplies its own synchronous reader. Absent is either
-   `undefined` or `null` -- a host naturally returns `null` for "not found", so
-   treating only `undefined` as absent would send `null` to [Js.to_string]. *)
+(* A host elsewhere supplies its own synchronous reader, returning a
+   Uint8Array (or null/undefined when the asset is not there). Bytes rather than
+   a string, for the reason above: a UTF-8 encoded byte string is a corrupt
+   interface. *)
 let set_reader_from_js read url =
   match
     Js.Optdef.to_option
       (Js.Unsafe.fun_call read [| Js.Unsafe.inject (Js.string url) |])
   with
   | None -> None
-  | Some v -> if is_absent v then None else Some (Js.to_string v)
+  | Some v ->
+      if is_absent v then None
+      else
+        Some
+          (Typed_array.Bytes.of_uint8Array
+             (Js.Unsafe.coerce v : Typed_array.uint8Array Js.t))
 
 let install_host_api () =
   let open Js.Unsafe in

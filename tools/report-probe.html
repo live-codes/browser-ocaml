@@ -1,0 +1,7 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>report probe</title></head>
+<body><h1>probe</h1>
+<script type="module">
+fetch('/report', { method: 'POST', body: JSON.stringify({ probe: 'module ran' }) }).catch(() => {});
+</script>
+</body></html>

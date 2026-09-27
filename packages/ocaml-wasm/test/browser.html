@@ -30,6 +30,12 @@
       const results = {};
       window.__check = results;
 
+      // Post as we go: this browser is relaunched between commands, so a result
+      // that only lives in the tab can be lost before anything reads it.
+      const post = () =>
+        fetch('/report', { method: 'POST', body: JSON.stringify(results) }).catch(() => {});
+      post();
+
       try {
         const compiler = await createCompiler({ baseUrl });
         say(`ready: ${compiler.banner}`);
@@ -48,6 +54,7 @@
               : `exitCode=${result.exitCode} stdout=${JSON.stringify(result.stdout)}` +
                 (result.diagnostics.length ? ` diagnostics=${JSON.stringify(result.diagnostics)}` : '');
             say(`${label} -> ${summary}`);
+            post();
             return result;
           });
 
@@ -68,10 +75,12 @@
         compiler.dispose();
         results.done = true;
         say('done');
+        post();
       } catch (err) {
         results.error = String(err && err.message ? err.message : err);
         say(`FAILED: ${results.error}`);
         results.done = true;
+        post();
       }
     </script>
   </body>

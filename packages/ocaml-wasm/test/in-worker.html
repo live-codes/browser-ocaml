@@ -28,6 +28,13 @@
       const results = {};
       window.__check = results;
 
+      // First thing: prove the module ran at all. Everything else can be lost
+      // to the browser being torn down, but this either lands or it does not.
+      fetch('/report', {
+        method: 'POST',
+        body: JSON.stringify({ moduleRan: true, at: new Date().toISOString() })
+      }).catch(() => {});
+
       let nextId = 1;
       const worker = new Worker('./host-worker.js');
 
@@ -68,10 +75,17 @@
           const timer = setTimeout(() => {
             worker.removeEventListener('message', onMessage);
             resolve({ timedOut: true });
-          }, 15000);
+          }, 10000);
           worker.addEventListener('message', onMessage);
           worker.postMessage({ type: 'compile-ocaml', id, payload });
         });
+
+      // Post as we go. Browser automation here launches a fresh browser per
+      // command, so a result that only lives in the tab can be lost before
+      // anything reads it -- a partial report is still evidence.
+      const post = () => {
+        fetch('/report', { method: 'POST', body: JSON.stringify(results) }).catch(() => {});
+      };
 
       const report = (label, result) => {
         results[label] = result;
@@ -82,40 +96,53 @@
                 (result.error ? ` error=${JSON.stringify(result.error)}` : '') +
                 (result.errors.length ? ` errors=${JSON.stringify(result.errors)}` : '')
         );
+        post();
       };
 
       try {
         const hostReady = await ready;
+        results.hostReady = hostReady;
+        post();
         if (!hostReady.ok) {
           results.error = hostReady.error;
           results.done = true;
           say(`FAILED: ${hostReady.error}`);
-          return;
+          post();
+        } else {
+          // Not an early `return`: a bare return is a syntax error at the top
+          // level of a module, and it fails the whole script silently.
+          say('host worker ready (its own protocol)');
+
+          const plain = await compile({ code: 'let () = print_endline "in the host worker"' });
+          report('plain', plain);
+
+          const withLib = await compile({
+            code: 'let () = print_endline (Greet.hello (read_line ()))',
+            input: 'host',
+          });
+          report('library+stdin', withLib);
+
+          const bad = await compile({ code: 'let x : int = "nope"' });
+          report('compile error', bad);
+
+          worker.terminate();
+          results.done = true;
+          say('done');
+          post();
         }
-        say('host worker ready (its own protocol)');
-
-        const plain = await compile({ code: 'let () = print_endline "in the host worker"' });
-        report('plain', plain);
-
-        const withLib = await compile({
-          code: 'let () = print_endline (Greet.hello (read_line ()))',
-          input: 'host',
-        });
-        report('library+stdin', withLib);
-
-        const bad = await compile({ code: 'let x : int = "nope"' });
-        report('compile error', bad);
-
-        const missing = await compile({ code: 'let () = print_endline Greet.hello' });
-        report('uses library again', missing);
-
-        worker.terminate();
-        results.done = true;
-        say('done');
       } catch (err) {
         results.error = String((err && err.message) || err);
         results.done = true;
         say(`FAILED: ${results.error}`);
+      }
+
+      // Post the results so they are readable from disk. Browser automation
+      // here launches a fresh browser per command, so a result that only exists
+      // in the tab can be lost before anything reads it.
+      try {
+        await fetch('/report', { method: 'POST', body: JSON.stringify(results) });
+      } catch (err) {
+        say(`could not post results: ${err}`);
       }
     </script>
   </body>

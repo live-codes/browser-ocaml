@@ -20,6 +20,12 @@ let contains haystack needle =
   go 0
 
 let () =
+  (* The command line derives all of this from its flags; calling the library
+     directly means setting it by hand. `Cps is what our own build uses, and
+     what compiler-libs requires. *)
+  Js_of_ocaml_compiler.Config.set_target `JavaScript;
+  Js_of_ocaml_compiler.Config.set_effects_backend `Cps;
+  Js_of_ocaml_compiler.Targetint.set_num_bits 32;
   let ic = open_in_bin "t.byte" in
   let one =
     Js_of_ocaml_compiler.Parse_bytecode.from_exe
@@ -34,6 +40,7 @@ let () =
   Js_of_ocaml_compiler.Driver.configure fmt;
   ignore
     (Js_of_ocaml_compiler.Driver.f
+       ~standalone:true
        ~link:`All
        ~source_map:false
        ~formatter:fmt

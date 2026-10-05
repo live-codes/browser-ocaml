@@ -1,3 +1,4 @@
 (executable
  (name emit_probe)
+ (modes byte exe)
  (libraries js_of_ocaml-compiler))

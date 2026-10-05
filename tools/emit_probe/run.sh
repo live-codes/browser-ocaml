@@ -38,7 +38,7 @@ opam exec -- js_of_ocaml t.byte -o cli.js && wc -c cli.js
 echo
 echo "== build the probe natively"
 cd /home/opam/src
-opam exec -- dune build tools/emit_probe/emit_probe.exe
+opam exec -- dune build tools/emit_probe/emit_probe.exe tools/emit_probe/emit_probe.bc
 cp _build/default/tools/emit_probe/emit_probe.exe "$work/"
 
 echo

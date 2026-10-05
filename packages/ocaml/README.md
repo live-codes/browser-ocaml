@@ -1,11 +1,11 @@
-# @live-codes/ocaml-wasm
+# @live-codes/ocaml
 
 Run **OCaml** in the browser, with no server and no build step. The runtime is a real OCaml toplevel -
 the same `compiler-libs` frontend that compiles ordinary OCaml, built with `js_of_ocaml` - running in a
 Web Worker, so a slow or runaway program cannot freeze the page.
 
 ```js
-import { createCompiler } from '@live-codes/ocaml-wasm';
+import { createCompiler } from '@live-codes/ocaml';
 
 const compiler = await createCompiler({ baseUrl: new URL('/ocaml/', location.href) });
 
@@ -21,7 +21,7 @@ A page cannot read a file inside an npm package, so the runtime assets have to b
 it can fetch them:
 
 ```bash
-npx --package @live-codes/ocaml-wasm ocaml-wasm-copy-assets public/ocaml
+npx --package @live-codes/ocaml ocaml-copy-assets public/ocaml
 ```
 
 That writes `worker.js`, `stdlib/` and `libs/` into a directory you already serve. Point `baseUrl` at
@@ -126,12 +126,12 @@ condition - see `THIRD-PARTY-NOTICES.md`.
 
 ## Development
 
-`packages/ocaml-wasm/test/browser.html` runs the API against the staged `assets/` and prints a summary
+`packages/ocaml/test/browser.html` runs the API against the staged `assets/` and prints a summary
 for each case. Serve the repository root and open it:
 
 ```bash
 python -m http.server 8080      # from the repository root
-# http://localhost:8080/packages/ocaml-wasm/test/browser.html
+# http://localhost:8080/packages/ocaml/test/browser.html
 ```
 
 The assets come from the repository's build (`docker/build.sh`), which stages them here as well as

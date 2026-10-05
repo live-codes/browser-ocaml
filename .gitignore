@@ -4,7 +4,7 @@ _build/
 # web/worker.min.js
 # web/stdlib/
 # web/libs/
-# packages/ocaml-wasm/assets/
+# packages/ocaml/assets/
 # ocaml-wasm-libs/
 .opam/
 *.install

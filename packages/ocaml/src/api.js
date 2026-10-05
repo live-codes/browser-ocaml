@@ -43,7 +43,7 @@ export function createApi() {
 	 * @param {object} options
 	 * @param {string|URL} options.baseUrl - where the runtime assets are served from. Required:
 	 *   the assets ship in this package but a page cannot read them off disk, so they have to be
-	 *   published somewhere fetchable (see `ocaml-wasm-copy-assets`).
+	 *   published somewhere fetchable (see `ocaml-copy-assets`).
 	 * @param {object} [options.runtime] - an already-loaded `self.ocamlWasm` to use in place,
 	 *   instead of starting a worker. Defaults to one already present in this context.
 	 * @param {string[]} [options.args] - default program argv. `Sys.argv.(0)` is `"main.ml"`.
@@ -55,7 +55,7 @@ export function createApi() {
 		if (!baseUrl) {
 			throw new Error(
 				'baseUrl is required: serve the runtime assets and pass their URL. ' +
-					'Run `ocaml-wasm-copy-assets <dir>` to write them, then ' +
+					'Run `ocaml-copy-assets <dir>` to write them, then ' +
 					"`createCompiler({ baseUrl: new URL('/ocaml/', location.href) })`."
 			);
 		}

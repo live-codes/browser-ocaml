@@ -49,12 +49,12 @@ ls -l web/worker.js
 # The package ships the same runtime as `assets/`, so that `copy-assets` has
 # something self-contained to publish.
 echo "==> Staging package assets"
-mkdir -p packages/ocaml-wasm/assets
-cp web/worker.js packages/ocaml-wasm/assets/
+mkdir -p packages/ocaml/assets
+cp web/worker.js packages/ocaml/assets/
 # The message-loop adapter: the runtime itself is a library, so standalone
 # hosts need this small shim, while a host that already owns a worker does not.
-cp web/worker-entry.js packages/ocaml-wasm/assets/
-rm -rf packages/ocaml-wasm/assets/stdlib packages/ocaml-wasm/assets/libs
-cp -r web/stdlib packages/ocaml-wasm/assets/
-cp -r web/libs packages/ocaml-wasm/assets/
-du -sh packages/ocaml-wasm/assets
+cp web/worker-entry.js packages/ocaml/assets/
+rm -rf packages/ocaml/assets/stdlib packages/ocaml/assets/libs
+cp -r web/stdlib packages/ocaml/assets/
+cp -r web/libs packages/ocaml/assets/
+du -sh packages/ocaml/assets

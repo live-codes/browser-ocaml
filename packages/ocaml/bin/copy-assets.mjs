@@ -12,7 +12,7 @@ const ASSETS = fileURLToPath(new URL('../assets/', import.meta.url));
 
 const USAGE = `Copy the OCaml runtime assets that ship with this package into a directory you serve.
 
-  ocaml-wasm-copy-assets [directory]
+  ocaml-copy-assets [directory]
 
   directory   where to write them (default: ./ocaml)
 

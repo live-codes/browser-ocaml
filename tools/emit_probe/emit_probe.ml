@@ -1,28 +1,28 @@
-(* Can the js_of_ocaml backend compile bytecode to JavaScript from *inside* a
-   js_of_ocaml-compiled program?
+(* Does linking js_of_ocaml-compiler.runtime-files let the backend emit a
+   complete, runnable bundle with no filesystem at all?
 
-   If it can, then OCaml can be a compile-to-JS language in the browser -- source
-   to bytecode with compiler-libs, bytecode to JS with this pipeline, and the JS
-   handed to the page -- which is the model LiveCodes uses for TS, CoffeeScript
-   and ReScript.
+   Every runtime chunk (array.js, io.js, fs_fake.js, ...) is registered into the
+   compiler by that sublibrary, through Builtins.register. Without it the
+   backend looks the chunks up through Fs -- fine for the command line,
+   impossible in a browser -- and silently omits whatever it cannot find, which
+   is what left the output referencing `caml_register_global_predef` and then
+   `caml_fs_init`.
 
-   This is the same pipeline the `js_of_ocaml` command line uses:
-     Parse_bytecode.from_exe  ->  Driver.f ~formatter
-   The only difference from the command line is the formatter: the CLI writes to
-   a file, and this writes to a Buffer, because a browser has no disk.
-
-   Reads ./t.byte, writes ./probe.out.js, prints a summary. No arguments, so it
-   behaves identically natively and under js_of_ocaml in Node. *)
+   Reads ./t.byte; writes ./prog.<variant>.js. No arguments, so it behaves
+   identically natively and under js_of_ocaml. *)
 
 let contains haystack needle =
   let n = String.length needle and h = String.length haystack in
   let rec go i = i + n <= h && (String.sub haystack i n = needle || go (i + 1)) in
   go 0
 
+(* Referencing this forces the module to be linked, which is what runs the
+   Builtins.register calls at load time. *)
+let () = ignore Js_of_ocaml_compiler_runtime_files.runtime
+
 let () =
   (* The command line derives all of this from its flags; calling the library
-     directly means setting it by hand. `Cps is what our own build uses, and
-     what compiler-libs requires. *)
+     directly means setting it by hand. `Cps is what our own build uses. *)
   Js_of_ocaml_compiler.Config.set_target `JavaScript;
   Js_of_ocaml_compiler.Config.set_effects_backend `Cps;
   Js_of_ocaml_compiler.Targetint.set_num_bits 32;
@@ -35,20 +35,24 @@ let () =
       ic
   in
   close_in ic;
-  let buf = Buffer.create 65536 in
-  let fmt = Js_of_ocaml_compiler.Pretty_print.to_buffer buf in
-  Js_of_ocaml_compiler.Driver.configure fmt;
-  ignore
-    (Js_of_ocaml_compiler.Driver.f
-       ~standalone:true
-       ~link:`All
-       ~source_map:false
-       ~formatter:fmt
-       one.Js_of_ocaml_compiler.Parse_bytecode.code);
-  let js = Buffer.contents buf in
-  Printf.printf "len=%d\n" (String.length js);
-  Printf.printf "contains-program-string=%b\n" (contains js "probe ok");
-  Printf.printf "head=%s\n" (String.escaped (String.sub js 0 (min 40 (String.length js))));
-  let oc = open_out_bin "probe.out.js" in
-  output_string oc js;
-  close_out oc
+  let code = one.Js_of_ocaml_compiler.Parse_bytecode.code in
+  let emit label driver =
+    let buf = Buffer.create 65536 in
+    let fmt = Js_of_ocaml_compiler.Pretty_print.to_buffer buf in
+    Js_of_ocaml_compiler.Driver.configure fmt;
+    ignore (driver fmt);
+    let js = Buffer.contents buf in
+    let name = "prog." ^ label ^ ".js" in
+    let oc = open_out_bin name in
+    output_string oc js;
+    close_out oc;
+    Printf.printf
+      "%-20s len=%-8d program-string=%b\n"
+      name
+      (String.length js)
+      (contains js "probe ok")
+  in
+  let d = Js_of_ocaml_compiler.Driver.f in
+  emit "stand-all" (fun fmt ->
+      d ~standalone:true ~link:`All ~source_map:false ~formatter:fmt code);
+  emit "all" (fun fmt -> d ~link:`All ~source_map:false ~formatter:fmt code)

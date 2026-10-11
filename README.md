@@ -69,6 +69,10 @@ docker exec -w /home/opam/src ocaml-toolchain sh docker/build.sh             # t
 Both stage into `packages/ocaml/assets/{compiler,interpreter}/`; `build.sh` also writes the
 interpreter's demo into `web/`.
 
+Which OCaml and js_of_ocaml they build with is declared in `docker/Dockerfile` and nowhere else —
+the scripts ask the switch for their paths. Upgrading is those two lines, a rebuild and the checks;
+`FINDINGS.md` §2.5 is the guide, including what tends to break and why.
+
 The compiler build applies a one-line opt-out of findlib — code that otherwise reads an absolute
 config path as the compiler starts, which a browser filesystem cannot resolve — and **fails loudly**
 if js_of_ocaml's dune file changes shape, so a version bump cannot silently patch the wrong thing.
@@ -95,7 +99,9 @@ conditions outside one — the driver with no filesystem, `jsoo.js` from an empt
 reports the bundle's size, its dummy primitives and what the program prints. `capture-server.mjs`
 next to it is a static server that accepts `POST /save`, which is the only way to get bytes out of a
 page. Both are worth keeping: the last real bug was found with them after reasoning from inside the
-page had failed several times.
+page had failed several times. `verify-fs.mjs` is the third: it hashes what the stdlib artifact
+actually registered so it can be compared with the switch's own files, which is the check for a
+corrupted `.cmi` after a toolchain upgrade.
 
 ## The package
 

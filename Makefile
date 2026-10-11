@@ -2,9 +2,10 @@
 # interpreter's own demo page. Requires Docker; nothing is installed on the host.
 #
 # These wrap the same scripts the long-lived `ocaml-toolchain` container runs, for
-# when there is no container to exec into. See README.md.
+# when there is no container to exec into -- and after an image rebuild, since a
+# container keeps running the image it was created from. See README.md.
 
-IMAGE = browser-ocaml-toolchain
+IMAGE = ocaml-toolchain
 
 .PHONY: all toolchain compiler worker serve clean
 

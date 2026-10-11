@@ -15,14 +15,30 @@
 set -eu
 cd /home/opam/src
 
-src=/home/opam/.opam/5.2/.opam-switch/sources/js_of_ocaml-compiler.6.4.1
-dune="$src/compiler/bin-js_of_ocaml/dune"
 out=packages/ocaml/assets/compiler
-ocamllib=/home/opam/.opam/5.2/lib/ocaml
+
+# Nothing version-specific is written down here. Ask the switch instead:
+#   ocamllib  the standard library it was built with (`opam var ocaml:lib`)
+#   jsoo_src  the js_of_ocaml sources opam unpacked when it built the package,
+#             named for whatever version it installed
+# That is what makes an upgrade two lines in docker/Dockerfile.
+ocamllib=$(opam var ocaml:lib)
+switch=$(opam var prefix)
+jsoo_version=$(opam list --installed --short --columns=version js_of_ocaml-compiler)
+jsoo_src="$switch/.opam-switch/sources/js_of_ocaml-compiler.$jsoo_version"
+if [ ! -d "$jsoo_src" ]; then
+  echo "ERROR: no js_of_ocaml-compiler $jsoo_version sources at $jsoo_src" >&2
+  echo "       opam keeps them once it has built the package. What is there:" >&2
+  ls "$switch/.opam-switch/sources/" >&2 || true
+  exit 1
+fi
+dune="$jsoo_src/compiler/bin-js_of_ocaml/dune"
 
 echo "==> Versions"
 opam exec -- ocaml -version
 opam exec -- js_of_ocaml --version
+echo "    stdlib  $ocamllib"
+echo "    sources $jsoo_src"
 
 echo "==> Opting js_of_ocaml out of findlib"
 # findlib's support code reads an absolute config path as the compiler starts:

@@ -296,10 +296,12 @@ node jsoo.js t.byte -o - > out.js     # out.js: 28,554 bytes, byte-identical, ru
 An earlier conclusion in this file said stdout was not available. That was drawn from running
 **without `-o` at all**, which prints nothing and is a different thing. Corrected.
 
-**ocamlc has no stdout option.** `node ocamlc.js t.ml -o -` produces **0 bytes** on stdout and
-creates no `-` file, so the source→bytecode half must write a real file. That file then lives in
-the compiler's filesystem, and there is no JS-side read hook (no `jsoo_read_file`). So exactly
-one read-back remains — of the *intermediate bytecode*, not of the final JavaScript.
+**ocamlc has no stdout option.** `node ocamlc.js t.ml -o -` writes **nothing to stdout**; it
+creates a file literally named `-` instead (22,273 bytes for the sample program — the bytecode).
+Unlike js_of_ocaml, `-` is not special to ocamlc, so the source→bytecode half must write a real
+file. That file then lives in the compiler's filesystem, and there is no JS-side read hook (no
+`jsoo_read_file`). So exactly one read-back remains — of the *intermediate bytecode*, not of the
+final JavaScript.
 
 Three ways to close it, best first:
 

@@ -1,0 +1,4 @@
+(executable
+ (name compile_stdout)
+ (modes byte exe)
+ (libraries compiler-libs.common compiler-libs.bytecomp))

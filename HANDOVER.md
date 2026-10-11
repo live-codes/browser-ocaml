@@ -75,15 +75,16 @@ require('./jsoo-browser.js');
 * `globalThis.jsoo_fs_tmp` queues files, which the program drains at `caml_fs_init` (§3.2).
 * Registration needs the **fake** device — `MlNodeDevice` has no `register`, so
   `caml_create_file` raises `cannot register file` — hence `--target-env=browser`.
-* **Output:** js_of_ocaml writes to stdout with `-o -` — **verified**, and *not* the same as
-  omitting `-o`, which prints nothing. `ocamlc -o -` does **not** work, so the intermediate
-  bytecode still has to be read back. That is the one remaining gap; options are in FINDINGS
-  §3.2.
 * **Registration is emitted by default — confirmed.** `globalThis.jsoo_fs_tmp`, `caml_fs_init`
   and `globalThis.jsoo_env` are all present in a default build. (An earlier note here said the
   machinery was missing; that was a **bad grep** — the global is reached through a minified
   alias, so search for `jsoo_fs_tmp`, not `globalThis.jsoo_*`.)
-* **The one real gap is the ocamlc output read-back** — options in FINDINGS §3.2.
+* **Output is solved on both halves.** js_of_ocaml writes to stdout with `-o -` (**verified**,
+  and *not* the same as omitting `-o`, which prints nothing). The intermediate bytecode comes out
+  of `tools/compile-stdout/` — our own compiler-libs driver — as **hex** on stdout, so no
+  read-back and no patch. The full loop is verified end to end; see FINDINGS §3.2.
+* **Remaining on the OCaml side:** trim and ship the stdlib (Step 3), and prove `fs_fake` in a
+  real browser — everything so far is Node.
 * Then confirm in a real browser page.
 
 ### Step 3 — Trim and ship the stdlib

@@ -303,19 +303,40 @@ file. That file then lives in the compiler's filesystem, and there is no JS-side
 `jsoo_read_file`). So exactly one read-back remains — of the *intermediate bytecode*, not of the
 final JavaScript.
 
-Ways to close it, best first:
+**That read-back is now closed.** `tools/compile-stdout/` is a small driver that links
+compiler-libs and does the whole job in one process — `Compile` and `Bytelink` are the same
+front end and linker that ocamlc uses:
 
-1. **Build a small source→bytecode program of our own** that links compiler-libs and *prints*
-   the bytecode to stdout. It is our program, so it can write to stdout freely — no read-back,
-   no upstream patch. It is also the natural home for the single entry point (HANDOVER Step 4)
-   and for capturing diagnostics. Recommended: `ocamlc` is a command-line program whose output
-   shape fights the browser, whereas compiler-libs is a library.
-2. **Make both compilers share one filesystem**, so the bytecode never leaves it.
-3. **Read the fake device.** `MlFakeDevice.register` (`fs_fake.js:355`) stores contents in
-   `this.content[name]` — a plain object — so a JS-side read is possible if the device is
-   reachable. But the device is **not** exposed (all the jsoo globals are write-side), so this
-   needs a patch too.
-4. **Patch ocamlc** to emit the bytecode as well as write it.
+```ocaml
+Load_path.init ~auto_include:Load_path.no_auto_include ~visible:[ Config.standard_library ] ~hidden:[];
+Compile.implementation ~start_from:Clflags.Compiler_pass.Parsing ~source_file ~output_prefix;
+Bytelink.link [ Filename.concat Config.standard_library "stdlib.cma"; cmo ] byte;
+print_string (hex_of_string (read_file byte))
+```
+
+Verified end to end:
+
+```
+driver                              -> hex on stdout   44,650 chars = 2 x 22,325
+decoded                                    out.byte = 22,325 bytes   (identical to ocamlc's ref.byte)
+node jsoo.js out.byte -o -                 out.js   = 28,562 bytes
+node out.js                                "stdout route ok"
+```
+
+Three details that matter:
+
+* **The bytecode is emitted as hex, not raw bytes.** js_of_ocaml's stdout goes through Node's
+  UTF-8 writer, so any byte above 127 would be re-encoded and corrupted — the same trap that
+  corrupted `.cmi` files. Hex is ASCII and survives.
+* **The file round-trip happens inside OCaml**, where reads do work: the driver writes `.cmo`
+  and `.byte` into its own filesystem and reads them back itself. Only the *source* has to come
+  from outside, via `jsoo_fs_tmp`.
+* `ocamlc`'s `Main.main` is linkable (`main.cmo`/`optmain.cmo` are in compiler-libs), but it
+  calls `exit`, so driving `Compile`/`Bytelink` directly is the right level.
+
+The alternatives were not needed: sharing one filesystem, reading the fake device
+(`MlFakeDevice.register` stores into `this.content[name]`, but the device is not exposed), or
+patching ocamlc.
 
 **Confirmed: the machinery IS emitted in a default build.** An earlier version of this file
 claimed otherwise. That was a **bad grep** — the generated code reaches the global object through

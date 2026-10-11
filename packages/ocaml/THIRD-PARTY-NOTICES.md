@@ -9,7 +9,7 @@ The package ships two independent implementations, each with its own artifacts:
 
 | Implementation | Artifacts | What runs |
 | --- | --- | --- |
-| **compiler** | `assets/compiler/compile_stdout.browser.js`, `assets/compiler/jsoo.js`, `assets/compiler/stdlib/` | OCaml source becomes JavaScript |
+| **compiler** | `assets/compiler/compile_stdout.browser.js`, `assets/compiler/jsoo.js`, `assets/compiler/stdlib.js`, `assets/compiler/runtime/` | OCaml source becomes JavaScript |
 | **interpreter** | `assets/interpreter/worker.js`, `assets/interpreter/worker-entry.js`, `assets/interpreter/stdlib/`, `assets/interpreter/libs/` | OCaml runs directly, as a toplevel |
 
 ## OCaml
@@ -22,9 +22,11 @@ Two separate things come from here.
 what makes these real OCaml rather than a reimplementation, and it is what both
 `compile_stdout.browser.js` and `worker.js` link.
 
-`stdlib/` is the standard library of the OCaml distribution, copied from the installed compiler:
-the interfaces, the code, and the two files the bytecode linker reads (`std_exit.cmo` and
-`runtime-launch-info`).
+The standard library of the OCaml distribution, copied from the installed compiler: the interfaces,
+the code, and the two files the bytecode linker reads (`std_exit.cmo` and `runtime-launch-info`).
+The interpreter ships it as `interpreter/stdlib/`; the compiler ships the same files folded into
+`compiler/stdlib.js`, a `js_of_ocaml build-fs` artifact that registers them into the pseudo
+filesystem at load.
 
 **LGPL-2.1-or-later WITH the OCaml linking exception.** The full text is in `LICENSE`.
 

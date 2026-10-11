@@ -104,8 +104,9 @@ from inside a js_of_ocaml program.
 
 ### 2.4 How to build
 
-All OCaml-side work happens in the Docker container `ocaml-toolchain` (opam switch `5.2`,
-OCaml 5.2.1, js_of_ocaml 6.4.1). The repo is mounted at `/home/opam/src`. **There is no node
+All OCaml-side work happens in the Docker container `ocaml-toolchain` (opam switch `5.5`,
+OCaml 5.5.1, js_of_ocaml 6.4.1 — see §2.5 for how those are declared). The repo is mounted at
+`/home/opam/src`. **There is no node
 inside the container** — run the JS on the host.
 
 `tools/emit_probe/pipeline.sh` does all of the below and is the reference.
@@ -539,7 +540,7 @@ driver was rebuilt with `--target-env=browser` — which selects `fs_fake` — a
 file registered and nothing on disk:
 
 ```js
-globalThis.jsoo_fs_tmp = [ { name: 'main.ml', content }, /* ...the 71 stdlib files */ ];
+globalThis.jsoo_fs_tmp = [ { name: 'main.ml', content }, /* ...the 75 stdlib files */ ];
 globalThis.jsoo_env = { OCAMLLIB: 'stdlib-min' };
 process.argv = ['node', 'compile_stdout', 'main.ml'];
 ```
@@ -917,34 +918,44 @@ Note this contract is likely to be replaced by the compile-to-JS one (`{ js, dia
 | --- | --- |
 | Container | `ocaml-toolchain`; `docker start ocaml-toolchain` |
 | Repo mount | `/home/opam/src` |
-| opam switch | `5.2` — OCaml 5.2.1, js_of_ocaml 6.4.1 |
+| opam switch | `5.5` — OCaml 5.5.1, js_of_ocaml 6.4.1 |
 | node | **host only** (v24.4.1); not in the container |
-| js_of_ocaml sources | `/home/opam/.opam/5.2/.opam-switch/sources/js_of_ocaml-compiler.6.4.1` and `.../js_of_ocaml.6.4.1` |
-| build all (interpreter) | `docker exec -w /home/opam/src ocaml-toolchain sh -c 'sh docker/build.sh'` |
+| js_of_ocaml sources | derived, not written down: `$(opam var prefix)/.opam-switch/sources/js_of_ocaml-compiler.<installed version>` |
+| build both | `docker run --rm -v "$PWD:/home/opam/src" -w /home/opam/src ocaml-toolchain sh docker/build-compiler.sh`, then `… sh docker/build.sh` |
 
 **Traps encountered:**
 
-* Docker Desktop can go down entirely (missing named pipe). Restart with
+* Docker Desktop can go down entirely (missing named pipe, or a 500 on `_ping`). Restart with
   `Start-Process "C:\Program Files\Docker\Docker\Docker Desktop.exe"` and wait ~45 s.
-* PowerShell mangles embedded double quotes passed to native commands — prefer
-  `docker exec -w DIR …` over nested `sh -c "…"`, or put commands in a `.sh` file.
+* PowerShell mangles embedded double quotes passed to native commands, and `shell_command` runs
+  `cmd.exe` rather than PowerShell. Feed a script to `docker exec -i … sh -s` on stdin, or put it in
+  a `.sh` file — a `for` loop does not survive the pipe.
 * `Remove-Item` on a directory just used by node/docker may fail with a handle error; retry
   after a few seconds.
 * `dune build` inside the opam source tree needs `git init` there.
 * Building `jsoo.js` in the container with `rm -rf _build` first is fine; the build is
   reproducible.
-* The interpreter's build produced a *different* `worker.js` once (4219716 vs 4220030 bytes)
-  and the difference was never explained; a `Marshal.data_size: bad object` failure did not
-  reproduce afterwards. Treat "the artifact I tested" as something to confirm by size.
+* The interpreter's build produced a *different* `worker.js` once (4219716 vs 4220030 bytes) and a
+  `Marshal.data_size: bad object` failure did not reproduce afterwards: it was a **stale artifact**
+  from a build that had not finished writing. Treat "the artifact I tested" as something to confirm
+  by size, or simply re-run the check.
+* **Do not filter a build log when you are checking whether a step succeeded.** A `Select-String` on
+  the output hid a script that had aborted at an unset variable, and the "nothing changed, so the
+  derivation is equivalent" conclusion that followed described a run which had built nothing. Print
+  the exit code, and read the tail unfiltered.
 
 ---
 
 ## 9. Open questions
 
-1. Does `fs_fake` behave the same as `fs_node` for the compilers in a browser? (§3.2)
-2. What is the minimum stdlib file set? (49.5 MB must come down; measure, do not guess.)
-3. One worker per compile, or can a compiler be made re-entrant? (§3.3)
-4. Does LiveCodes' compile worker allow `importScripts` of a 5 MB script, and how does
-   `largeDownload`/caching handle ~7 MB? (§6.5)
-5. Which model does the user want for the *first* ship — compile-to-JS only, or the
-   interpreter as an interim? The interpreter works today; compile-to-JS is the stated target.
+1. Does LiveCodes' compile worker allow `importScripts` of a 5.7 MB script, and how do
+   `largeDownload` and CDN caching handle ~14 MB of compiler assets? (§6.5) This is the one question
+   the integration still has to answer, and the reason `largeDownload` is set on the entry.
+
+Answered since this list was written: `fs_fake` *does* behave the same as `fs_node` for the
+compilers — the whole browser path runs (§3.2); the minimum stdlib set is every `*.cmi` plus
+`stdlib.cma`, `std_exit.cmo` and `runtime-launch-info`, now 75 files / 5.94 MB (§3); and a
+js_of_ocaml program cannot be reused once it has run, so it is one worker per compile (§3.3).
+
+The "first ship" question is settled as well: compile-to-JS is the language, and the interpreter
+ships alongside it behind its own entry point.

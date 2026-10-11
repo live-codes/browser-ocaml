@@ -139,12 +139,15 @@ what is whose inside the generated bundles.
 
 ## Building
 
-The artifacts are generated, and the build runs in the toolchain container described in `docker/`
-(opam switch `5.2`, OCaml 5.2.1, js_of_ocaml 6.4.1) with the repository mounted at `/home/opam/src`:
+The artifacts are generated, and the build runs in the toolchain container described in `docker/` —
+OCaml 5.5.1 and js_of_ocaml 6.4.1, both declared in `docker/Dockerfile` and nowhere else — with the
+repository mounted at `/home/opam/src`. `docker run --rm` rather than `docker exec`, so it always
+runs the image you just built:
 
 ```sh
-docker exec -w /home/opam/src ocaml-toolchain sh docker/build-compiler.sh   # the compiler
-docker exec -w /home/opam/src ocaml-toolchain sh docker/build.sh            # the interpreter
+docker build -t ocaml-toolchain docker                                       # once
+docker run --rm -v "$PWD:/home/opam/src" -w /home/opam/src ocaml-toolchain sh docker/build-compiler.sh
+docker run --rm -v "$PWD:/home/opam/src" -w /home/opam/src ocaml-toolchain sh docker/build.sh
 ```
 
 Both stage into this package's `assets/`. The compiler build applies a one-line opt-out of findlib —

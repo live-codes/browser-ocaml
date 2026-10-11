@@ -1,256 +1,138 @@
 # HANDOVER.md — continuing OCaml-in-LiveCodes
 
-For a fresh session picking this up. Read `FINDINGS.md` alongside this: it has the technical
-detail and the evidence; this file is what to *do* and what not to repeat.
+For a fresh session picking this up. Read `FINDINGS.md` alongside it: that has the technical record —
+what was measured, what was ruled out and why, the traps, the upgrade guide (§2.5) and the LiveCodes
+contract (§6). This file is what to *do* next and what not to repeat.
 
-**Status: the OCaml side is done and the package is ready to publish.** Both implementations are
-packaged behind separate entry points, licensed, built reproducibly, and verified — the compiler in
-a browser, the interpreter in a browser and under node. The one remaining step is the LiveCodes
-integration described below, which is deliberately not started.
-
----
-
-## 1. State of play in one paragraph
-
-The goal is real OCaml in LiveCodes, browser-only, **compiled to JavaScript** which the result
-page runs (like TypeScript/ReScript) — not an interpreter. The feasibility question is **closed
-and the hard part is done and verified**: both halves of the official toolchain now run as
-JavaScript. `ocamlc` compiled to JS turns source into bytecode; `js_of_ocaml` compiled to JS
-turns bytecode into a self-contained runnable JS bundle. What is left is a build-and-integration
-project: a browser adapter (virtual filesystem + injected argv), trimming a 49.5 MB stdlib
-asset, and the LiveCodes language entry with its starter and tests. Nothing is usable in
-LiveCodes yet.
+**Status: the OCaml side is done.** Both implementations are packaged behind separate entry points,
+licensed, built reproducibly, and verified — the compiler and the interpreter, in a browser and under
+node, from the source tree and from the published tarball. The one remaining step is the LiveCodes
+integration below, which is deliberately not started.
 
 ---
 
-## 2. Where everything is
+## 1. Where everything is
 
 | Path | What |
 | --- | --- |
-| `FINDINGS.md` | technical findings, evidence, ruled-out approaches, LiveCodes contract |
-| `tools/emit_probe/` | the whole investigation as small scripts |
-| `tools/emit_probe/pipeline.sh` | **the reference** — builds both compilers and the stdlib |
-| `tools/emit_probe/inject_argv.cjs` | demonstrates argv injection (the key unlock for browsers) |
-| `tools/emit_probe/jsoo_in_js.sh` | builds `js_of_ocaml` as bytecode → JS, incl. the findlib opt-out |
-| `tools/emit_probe/ocamlc_in_js.sh` | compiles `ocamlc.byte` to JS |
-| `tools/emit_probe/run.sh`, `target_env.sh`, `emit_probe.ml`, `dune` | earlier probes; `emit_probe.ml` proves bytecode→JS works from *inside* a js_of_ocaml program |
-| `src/worker.ml` | the **interpreter** (an OCaml toplevel; works in node and in a browser) |
-| `packages/ocaml/` | npm package `@live-codes/ocaml`: both implementations, and its README is current |
-| `docker/build.sh` | builds the interpreter and stages package assets |
-| `D:\DevWork\live-codes\livecodes` | LiveCodes, read-only reference |
+| `FINDINGS.md` | the technical record: measurements, ruled-out approaches, traps, the upgrade guide (§2.5), the LiveCodes contract (§6) |
+| `packages/ocaml/` | npm package `@live-codes/ocaml` — both implementations, behind separate entry points |
+| `docker/Dockerfile` | the toolchain, and the only place a version is named (OCaml 5.5, js_of_ocaml 6.4.1) |
+| `docker/build-compiler.sh`, `docker/build.sh` | the two builds; they ask the switch for their paths, so a version bump touches only the Dockerfile |
+| `tools/compile-stdout/` | the compiler-libs driver (source → bytecode), with `emit-check.mjs` and `verify-fs.mjs` |
+| `tools/emit_probe/` | the original feasibility investigation, kept as small scripts |
+| `src/worker.ml` | the interpreter (an OCaml toplevel); `web/` is its standalone demo |
+| `Makefile` | `make compiler` / `make worker` / `make serve` wrap the same steps |
 
-`tools/emit_probe/work/` is generated and gitignored-in-spirit — it holds ~50 MB of copies.
-It is removed after each run; `pipeline.sh` recreates everything.
+`tools/emit_probe/work/` is generated (~50 MB) and untracked; `pipeline.sh` recreates it.
 
 ---
 
-## 3. What to do next, in order
+## 2. What is left: the LiveCodes integration
 
-### Step 1 — Reproduce the verified pipeline
+This is the only remaining work. It needs `@live-codes/ocaml` published first, because the vendors
+path is a CDN.
 
-Do this first. It confirms the environment before anything is built on it.
-
-```powershell
-docker start ocaml-toolchain
-docker exec ocaml-toolchain sh /home/opam/src/tools/emit_probe/pipeline.sh
-cd D:\DevWork\live-codes\browser-ocaml\tools\emit_probe\work
-$env:OCAMLLIB = "stdlib-ocaml"
-node ocamlc.js t.ml -o t.byte     # expect t.byte ≈ 22,273 bytes
-node jsoo.js  t.byte -o out.js    # expect out.js = 28,554 bytes
-node out.js                       # expect: probe ok
-```
-
-If that prints `probe ok`, the toolchain works and you can move on.
-
-### Step 2 — Browser adapter: prove `fs_fake`
-
-Node uses `fs_node.js`; a browser uses `fs_fake.js`. Build the compilers with
-`--target-env=browser` and drive them with **no real files at all**:
-
-```js
-globalThis.process = { argv: ['js_of_ocaml', 'main.byte', '-o', 'out.js'] };
-globalThis.jsoo_fs_tmp = [
-  { name: 'main.byte', content: bytecodeBytes },
-  // the stdlib files, from build-fs or from disk
-];
-require('./jsoo-browser.js');
-```
-
-* `globalThis.process.argv` gives the compiler its arguments (§3.1 of FINDINGS).
-* `globalThis.jsoo_fs_tmp` queues files, which the program drains at `caml_fs_init` (§3.2).
-* Registration needs the **fake** device — `MlNodeDevice` has no `register`, so
-  `caml_create_file` raises `cannot register file` — hence `--target-env=browser`.
-* **Registration is emitted by default — confirmed.** `globalThis.jsoo_fs_tmp`, `caml_fs_init`
-  and `globalThis.jsoo_env` are all present in a default build. (An earlier note here said the
-  machinery was missing; that was a **bad grep** — the global is reached through a minified
-  alias, so search for `jsoo_fs_tmp`, not `globalThis.jsoo_*`.)
-* **Output is solved on both halves.** js_of_ocaml writes to stdout with `-o -` (**verified**,
-  and *not* the same as omitting `-o`, which prints nothing). The intermediate bytecode comes out
-  of `tools/compile-stdout/` — our own compiler-libs driver — as **hex** on stdout, so no
-  read-back and no patch. The full loop is verified end to end; see FINDINGS §3.2.
-* **The driver also runs as JavaScript — verified.** `process.argv` + `jsoo_env` drive it, and
-  its bytecode goes through `jsoo.js -o -` to JavaScript that runs. The whole source→JS pipeline
-  is JavaScript end to end. FINDINGS §3.2 has the two gotchas (absolute paths for `Bytelink`;
-  the argv convention) — read them before debugging anything here.
-* **`fs_fake` is verified.** The driver rebuilt for the browser target, with all 72 files
-  registered and nothing on disk, produces bytecode that goes through `jsoo.js -o -` to
-  JavaScript that runs. See FINDINGS §3.2.
-* **The blocker is fixed.** A compiled program produced no output in a browser, and the cause was
-  the harness, not js_of_ocaml: its stdout is line-buffered, so the worker received one console
-  call per line and joined them with `''`, which deleted the newlines and left the whole program
-  inside the header comment it starts with — a 64 KB no-op script. The chunks are now rejoined with
-  newlines, and `compile()` fails loudly if a bundle ever arrives as a single line. Verified in the
-  browser: the program prints. See FINDINGS §3.2.
-* Then confirm in a real browser page.
-
-### Step 3 — Ship the stdlib: done, as one artifact
-
-**Measured: 71 files / 1.8 MB**, down from 438 files / 49.5 MB. The set is exactly every `*.cmi`
-(68), plus `stdlib.cma`, `std_exit.cmo` and `runtime-launch-info`.
-
-`js_of_ocaml build-fs -I DIR -o out.js NAME:/stdlib/NAME …` builds the filesystem as its own
-artifact, and `packages/ocaml/assets/compiler/` now carries `stdlib.js` instead of a `stdlib/`
-directory plus a manifest — 4.9 MB rather than 1.8 MB, because a byte above 127 inlines as an escape
-(2.6×), but one request instead of 71 per compile, and no JavaScript assembling it. The worker
-mounts it with `importScripts` before the compiler program; the driver reads it through
-`OCAMLLIB=/stdlib`.
-
-Verified two ways: every one of the 71 files compared byte for byte after mounting, and end to end
-in a browser — no dummy primitives, and a three-line program printed all three lines in ~1.2 s.
-`tools/compile-stdout/emit-check.mjs` reproduces the same check outside a browser.
-
-The interpreter keeps its own mechanism deliberately: its 71 interfaces are fetched **on demand**, so
-a small program never downloads the ones it does not use. That is a different trade, and it is the
-one that makes `--no-cmis` viable there.
-
-### Step 4 — One entry point: source → JS
-
-**Done in the Node shape:** `tools/compile-stdout/compile.mjs` exposes
-`compile(source, { driver, jsoo, stdlib }) -> { js, diagnostics }`, with real compiler diagnostics
-— location, source excerpt and caret. `test-entry.mjs` runs it.
-
-**Verified in a real browser.** Serve the repo root, open
-`/tools/compile-stdout/web/index.html` and click Compile — it produces ~70 KB of JavaScript in
-~1.2 s with clean diagnostics. The page needs `work/compile_stdout.browser.js`, `work/stdlib-min/`
-and `../emit_probe/work/jsoo.js`, so run `browser.sh` and `pipeline.sh` first.
-
-Known gap: the page's "run the output" iframe shows nothing — plumbing in the test page, not the
-toolchain. The emitted JavaScript runs fine under node (`test-entry.mjs`), and LiveCodes uses the
-same console-override capture that is verified to work.
-
-Two browser-only rules the harness depends on, both in FINDINGS §3.2: **never call `exit`**
-(unimplemented in a browser-target build), and **capture output by overriding `console`**
-(`fs_fake` wires fd 1/2 to `console.log`/`console.error`). Also: `TextDecoder('latin1')` is
-windows-1252 in browsers and corrupts binary files — convert byte by byte.
-
-The driver's warning level is already tuned: it sets `+a-70`, so an unused variable is reported
-rather than passing silently, with `-70` suppressing `Warning 70 [missing-mli]`. That suppression is
-the one thing to revisit if the compiler ever grows a mode that cares about `.mli` files.
-`tools/compile-stdout/test-entry.mjs` has a `warning` case that shows the current behaviour.
-
-### Step 5 — LiveCodes language entry
-
-Full contract in §6 of FINDINGS. Summary: language id **`ocaml-wasm`**, `editorLanguage:
-'ocaml'`, `largeDownload: true`, a `factory` in the compiler worker returning the emitted JS, a
-`vendors.ts` entry (**requires publishing `@live-codes/ocaml` to npm, and so a `license`**), the
-script added to `scripts/build.js`'s IIFE entry points, a **new starter** (the existing
-`ocaml-starter.ts` is ReScript-flavoured OCaml importing React and will not compile), i18n
-strings, and a `test.slow()` e2e.
-
-### Step 6 — Deprecate, then swap
-
-Give `ocaml-wasm` a qualified extension; leave `ml`/`mli` with the old entry for now. Deprecate
-by changing the old entry's `title` (no new API needed). The eventual swap is **one line**:
-`ocaml`'s `compiler: 'rescript'` → `compiler: 'ocaml-wasm'`, then hand over `ml`/`mli`.
+1. **Publish** `@live-codes/ocaml` — see §4.
+2. **Language entry** — `lang-ocaml-wasm-script.ts`: id `ocaml-wasm`, title `OCaml (Wasm)`,
+   `editorLanguage: 'ocaml'`, `editor: 'script'`, `largeDownload: true`, and a factory in the
+   compiler worker returning the emitted JavaScript. Register it in `languages.ts`, and add the
+   script to the IIFE entry points in `scripts/build.js` — the `{{hash:…}}` rewrite means the file
+   does not exist otherwise.
+3. **`vendors.ts`** — resolve the assets through jsDelivr.
+4. **Deprecate the old entry** — change its `title` to `OCaml (ReScript, deprecated)`. There is no
+   `deprecated` field. Keep it visible and sorted last: hiding it is indistinguishable from removal
+   and strands `l=en` links.
+5. **A new starter** — the existing `ocaml-starter.ts` is ReScript-flavoured OCaml importing React
+   and will not compile.
+6. **New thumbnail, i18n strings** across the locales, a `__tests__` unit spec, a `test.slow()` e2e.
+7. **Later, the swap** — `ocaml`'s `compiler: 'rescript'` → `'ocaml-wasm'`, then hand over `ml`/`mli`.
+   That hand-over *is* the swap. Do not take `ml`/`mli` earlier: `getLanguageByAlias` resolves ids,
+   titles *and* extensions and returns the first match, so two languages claiming `ml` is a real
+   ambiguity.
 
 ---
 
-## 4. Decisions already made — do not relitigate
+## 3. How to verify
 
-* **Compile to JS, not an interpreter.** The user was explicit: OCaml should work like
-  TypeScript/ReScript — compile to JS, executed in the result page.
-* **JS backend, not `wasm_of_ocaml`.** The user chose js_of_ocaml.
-* **Do not reimplement the js_of_ocaml driver.** The runtime is composed by the CLI's
-  orchestration, which lives in the *executable* (`compiler/bin-js_of_ocaml/compile.ml`), not
-  the library. Compiling the compiler itself to JS brings that orchestration along for free.
-  Chasing `Driver.f` flags was a dead end — see FINDINGS §5.
-* **Do not hand-assemble runtimes.** Three attempts failed for three different reasons
-  (FINDINGS §5). The compiler-as-JS emits complete bundles; use it.
-* **Add the language, do not replace it yet.** Deprecate the ReScript-backed `ocaml` first.
+| Check | Command | Expect |
+| --- | --- | --- |
+| Compiler, outside a browser | `node tools/compile-stdout/emit-check.mjs` | `dummy primitives: (none)` and the program prints |
+| Stdlib artifact, byte for byte | `node tools/compile-stdout/verify-fs.mjs`, against `sha256sum` in the container (see its header) | no differences |
+| Interpreter, outside a browser | `node packages/ocaml/test/node-check.mjs` | seven cases correct |
+| Both, in a browser | serve the repo root, open `packages/ocaml/test/{compiler,interpreter,interpreter-in-worker}.html` | each reports its cases |
+| The published artifact | `npm pack`, install into a fresh project, import all three entry points | they resolve, and the interpreter runs from the copied assets |
+
+The browser pages matter. `emit-check` and `node-check` reproduce the browser's conditions by
+construction, but the sync-XHR delivery, the on-demand interface fetching and the worker handshake
+only exist in a page — and that is where the two real harness bugs were found.
 
 ---
 
-## 5. Constraints and rules
+## 4. Publishing
+
+1. **`git push`** — the repository is public, and the work is not pushed.
+2. **`npm publish`** from `packages/ocaml` — needs auth for the `@live-codes` scope.
+   `publishConfig.access` is `public` already.
+3. **`.commandcode/taste/`** is tracked and would go public with the repository. Untrack and ignore,
+   or keep. Asked; not yet answered.
+
+---
+
+## 5. Decisions already made — do not relitigate
+
+* **Compile to JS, not an interpreter, for the language.** The user was explicit: OCaml should work
+  like TypeScript/ReScript. The interpreter ships too, behind its own entry point, but it is not the
+  language's backend.
+* **js_of_ocaml, not `wasm_of_ocaml`.** The `-wasm` in the language id is aspirational — `ocaml-js`
+  was the alternative, and the id is expensive to change, so it is settled.
+* **Do not reimplement the js_of_ocaml driver.** Its orchestration lives in the executable
+  (`compiler/bin-js_of_ocaml/compile.ml`), not the library, which is why the compiler is compiled
+  with itself. Chasing `Driver.f` flags was a dead end — FINDINGS §5.
+* **Do not hand-assemble runtimes.** Three attempts failed for three different reasons (§5).
+* **The interpreter keeps on-demand `.cmi` fetching.** A small program should not download
+  interfaces it never uses; the compiler's single `build-fs` artifact is the other trade, and both
+  are deliberate.
+* **The package ships both implementations, with separate assets**, so using one costs nothing for
+  the other.
+
+---
+
+## 6. Constraints and rules
 
 * Browser-only. **No servers.**
 * The user controls `.gitignore` and wants artifacts committable — do not "restore" it.
 * Only commit when asked; commit messages end with
   `Co-authored-by: CommandCodeBot <noreply@commandcode.ai>`.
-* Follow the existing code's comment style: explain *why*, and only where it is not obvious.
+* Follow the existing comment style: explain *why*, and only where it is not obvious.
 * Do not edit `.commandcode/taste/`. Record preferences with the `taste` tool.
-
----
-
-## 6. How to verify
-
-| Check | Command | Expect |
-| --- | --- | --- |
-| Toolchain end to end | `pipeline.sh` then the three node commands (§3 Step 1) | `probe ok` |
-| argv injection | `node inject_argv.cjs` | `work/out.js` = 28,554 bytes, runs |
-| Interpreter | `node packages/ocaml/test/node-check.mjs` | all cases correct |
-| Emitted bundle is self-contained | `node out.js` from a clean directory | prints the program's output |
-
-Note: `node-check.mjs` has no "missing asset" case, deliberately. The obvious one — break the
-reader, then run something that needs an interface — proves nothing, because the environment caches
-loaded interfaces, so a later case never asks for one it has already seen. That case used to exist
-and was misleading; it is gone.
+* **Do not publish, and do not start the LiveCodes integration, without being asked.**
 
 ---
 
 ## 7. Traps that cost real time
 
-* **`print-standard-runtime` output is not loadable** — duplicate `class MlNodeDevice`. Do not
-  use it as a runtime asset.
-* **`build-runtime` needs `-o`**; a shell redirect silently yields a 0-byte runtime, which
-  surfaces much later as a misleading `caml_fs_init is not defined`.
-* **Absolute paths do not resolve** outside a browser — `Sys_error("no device found for …")`.
-  Use relative paths and a relative `OCAMLLIB`.
-* **js_of_ocaml's node filesystem writes strings as UTF-8**, so staging binary data through it
-  corrupts bytes above 127.
-* **`null` and `undefined` are different** across the JS/OCaml boundary;
-  `Js.Optdef.to_option` treats only `undefined` as absent.
-* **Field mismatches across that boundary hang** rather than throw.
-* **PowerShell mangles embedded double quotes** in native args — use `docker exec -w DIR …`
-  rather than nested `sh -c`, or put the commands in a `.sh` file (as the probe scripts do).
-* **Docker Desktop sometimes dies** (missing named pipe). Restart:
-  `Start-Process "C:\Program Files\Docker\Docker\Docker Desktop.exe"`, wait ~45 s.
-* **`Remove-Item` may fail on a just-used directory** — retry after a few seconds.
+* **A program that calls Dynlink needs `--dynlink` when it is built**, or js_of_ocaml substitutes a
+  raising dummy and mentions it only in a "missing primitives" warning that reads like a footnote.
+  That is what made OCaml 5.5 fail at first — FINDINGS §2.5.
+* **`build-fs` inlines bytes as escapes**, so the artifact is ~2.6× its files. Fine for one request
+  instead of 75; `verify-fs.mjs` is how you check nothing was remapped.
+* **`TextDecoder('latin1')` is windows-1252 in browsers** and corrupts bytes above 127. Convert byte
+  by byte.
+* **`null` and `undefined` are different** across the JS/OCaml boundary; field mismatches hang rather
+  than throw.
+* **`print-standard-runtime` output is not loadable** (duplicate `class MlNodeDevice`), and
+  **`build-runtime` needs `-o`** or a redirect silently yields a 0-byte runtime.
+* **Absolute paths do not resolve outside a browser's `fs_fake`** — use relative paths.
+* **A container keeps running the image it was created from.** After an image rebuild, use
+  `docker run --rm` or recreate it; the `Makefile` does the former.
+* **Docker Desktop sometimes dies** — a missing named pipe, or a 500 on `_ping`. Restart it and wait.
+* **Watch for the failure you cannot see.** A filtered build log hid a failed step, and a
+  "byte-identical, so it works" claim turned out to describe a script that had aborted. Print exit
+  codes, read the tail of the output, and re-run rather than infer.
+* **`shell_command` runs `cmd.exe`, not PowerShell**, and PowerShell mangles embedded quotes in
+  native args. Prefer a script on stdin (`sh -s`) or a `.sh` file.
+* **`for` loops do not survive the PowerShell→docker stdin pipe.** Write flat commands.
 * **Read the source before experimenting.** Two files answered in minutes what hours of flag
-  toggling did not: `js_of_ocaml-compiler/dynlink/js_of_ocaml_compiler_dynlink.ml` (the working
-  in-program recipe) and `bin-js_of_ocaml/dune` (it already links `runtime-files`).
-* **Docker lifecycle:** stop the container when done, and remove
-  `tools/emit_probe/work/` — it is ~50 MB.
-
----
-
-## 8. Questions for the user
-
-1. **First ship:** compile-to-JS only, or the working interpreter as an interim? The
-   interpreter is verified and could replace the misleading `ocaml` entry quickly, but it has
-   no Compiled Code pane, no DOM interop and reports through the console.
-2. **Package license** — required before publishing `@live-codes/ocaml` to npm, which the
-   LiveCodes CDN path needs. Currently unset on purpose.
-3. **Language id** — `ocaml-wasm` (convention, matches other second implementations, but the
-   build is js_of_ocaml not wasm) versus `ocaml-js` (accurate now, rename later if the project
-   ever moves to `wasm_of_ocaml`).
-4. **Stdlib size ceiling** — how much first-download is acceptable in LiveCodes, since it
-   drives how hard Step 3 needs to work.
-
----
-
-## 9. Suggested first message to the user
-
-> I've read FINDINGS.md and HANDOVER.md. The toolchain runs entirely as JavaScript and that's
-> verified; what remains is the browser adapter, trimming the stdlib asset, and the LiveCodes
-> entry. Shall I start with the browser adapter — proving the virtual filesystem in an actual
-> browser — since that's the last unverified mechanism?
+  toggling did not: `js_of_ocaml-compiler/dynlink/js_of_ocaml_compiler_dynlink.ml`, and
+  `bin-js_of_ocaml/dune` — and `compile.ml:206` is where `--dynlink` turned out to live.

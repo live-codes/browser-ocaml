@@ -57,13 +57,14 @@ needed when something changes.
 
 ## Building
 
-The toolchain container is `ocaml-toolchain` — opam switch `5.2`, OCaml 5.2.1, js_of_ocaml 6.4.1 —
-with the repository mounted at `/home/opam/src`:
+The toolchain container is `ocaml-toolchain` — OCaml 5.5.1 and js_of_ocaml 6.4.1, both declared in
+`docker/Dockerfile` — with the repository mounted at `/home/opam/src`. `docker run --rm` rather than
+`docker exec`, so it always uses the image you just built:
 
 ```sh
 docker build -t ocaml-toolchain docker                                       # once
-docker exec -w /home/opam/src ocaml-toolchain sh docker/build-compiler.sh    # the compiler
-docker exec -w /home/opam/src ocaml-toolchain sh docker/build.sh             # the interpreter
+docker run --rm -v "$PWD:/home/opam/src" -w /home/opam/src ocaml-toolchain sh docker/build-compiler.sh
+docker run --rm -v "$PWD:/home/opam/src" -w /home/opam/src ocaml-toolchain sh docker/build.sh
 ```
 
 Both stage into `packages/ocaml/assets/{compiler,interpreter}/`; `build.sh` also writes the

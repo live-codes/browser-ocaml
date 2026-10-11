@@ -3,11 +3,15 @@
 // For diagnosing the browser: the only way to compare what a browser produced
 // with what the same pipeline produces outside one is to get the bytes out of
 // the page, and a page cannot write files.
+//
+// It is also what `npm run serve` runs, which is why the port is not fixed:
+// set `PORT` to use another.
 import { createServer } from 'node:http';
 import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { extname, join, resolve } from 'node:path';
 
 const root = resolve(process.argv[2] ?? '.');
+const port = process.env.PORT ? Number(process.env.PORT) : 8081;
 const TYPES = {
 	'.html': 'text/html; charset=utf-8',
 	'.js': 'text/javascript',
@@ -39,4 +43,4 @@ createServer((req, res) => {
 	}
 	res.writeHead(200, { 'content-type': TYPES[extname(path)] ?? 'application/octet-stream' });
 	res.end(readFileSync(path));
-}).listen(8080, () => console.log(`serving ${root} on 8080`));
+}).listen(port, () => console.log(`serving ${root} on ${port}`));

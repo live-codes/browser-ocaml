@@ -127,6 +127,9 @@ only exist in a page — and that is where the two real harness bugs were found.
 * **A container keeps running the image it was created from.** After an image rebuild, use
   `docker run --rm` or recreate it; the `Makefile` does the former.
 * **Docker Desktop sometimes dies** — a missing named pipe, or a 500 on `_ping`. Restart it and wait.
+* **Stopping the `npm run serve` task can leave the server holding the port.** npm runs the script as
+  a child process, and the child outlives the wrapper. Check the port and stop the process that owns
+  it rather than assuming the task kill released it, or the next `npm run serve` fails to bind.
 * **Watch for the failure you cannot see.** A filtered build log hid a failed step, and a
   "byte-identical, so it works" claim turned out to describe a script that had aborted. Print exit
   codes, read the tail of the output, and re-run rather than infer.

@@ -45,10 +45,17 @@ createServer((req, res) => {
 	res.end(readFileSync(path));
 }).listen(port, () => {
 	console.log(`serving ${root} on ${port}`);
-	// The page worth clicking through to. Printed only when the served directory
-	// actually has it, since this will serve any root.
-	const demo = 'packages/ocaml/test/compiler.html';
-	if (existsSync(join(root, demo))) {
-		console.log(`compiler demo: http://localhost:${port}/${demo}`);
+	// The pages worth clicking through to. Each is printed only if the served
+	// directory actually has it, since this will serve any root.
+	const pages = [
+		['compiler', 'packages/ocaml/test/compiler.html'],
+		['interpreter', 'packages/ocaml/test/interpreter.html'],
+		['interpreter, host worker', 'packages/ocaml/test/interpreter-in-worker.html'],
+		['toplevel demo', 'web/index.html']
+	];
+	for (const [label, page] of pages) {
+		if (existsSync(join(root, page))) {
+			console.log(`  ${label.padEnd(26)} http://localhost:${port}/${page}`);
+		}
 	}
 });

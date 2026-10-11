@@ -197,29 +197,35 @@ the Dockerfile is the same thing when it works out.
 opam show js_of_ocaml-compiler.<version> --field=depends | grep ocaml
 ```
 
-**Tried it — 5.5 is not usable yet.** Everything builds: the image, `jsoo.js`, the driver against
-5.5's compiler-libs, and `build-fs` produces a byte-exact 75-file artifact. But the driver then dies
-at startup with
+**Tried it — 5.5 is not usable as things stand.** Everything builds: the image, `jsoo.js`, the
+driver against 5.5's compiler-libs, and `build-fs` produces a byte-exact 75-file artifact. But the
+driver then dies at startup with
 
 ```
 [ 0, [ 248, 'Failure', -3 ], 'caml_dynlink_parse_ld_conf not implemented' ]
 ```
 
-OCaml 5.5's `dynlink` calls a primitive that js_of_ocaml 6.4.1's runtime chunk does not provide. It
-appears in the build as one extra line in the missing-primitives warning, and only under 5.5:
+The primitive is **not** missing from js_of_ocaml: `runtime/js/dynlink.js` provides it, and that
+chunk is byte-identical whether js_of_ocaml 6.4.1 was built on 5.2 or on 5.5 — 2924 bytes, the same
+`//Provides:` list, checked on both. What is missing is the **link**: the driver's own build does not
+pull the dynlink chunk in, so js_of_ocaml substitutes a raising dummy and says so in a warning that
+reads like a footnote:
 
 ```
 Missing primitives provided by +dynlink.js:
   caml_dynlink_close_lib
   caml_dynlink_lookup_symbol
   caml_dynlink_open_lib
-  caml_dynlink_parse_ld_conf     <- new in 5.5, and the only one that gets called
+  caml_dynlink_parse_ld_conf     <- listed only from 5.5 on
 ```
 
-Both programs use Dynlink — the driver pulls it in through compiler-libs, and the interpreter is
-built `--dynlink` — so "inside the constraint" was not the same as working. Waiting for a
-js_of_ocaml that provides the primitive is the clean answer; a runtime stub for it is possible (that
-is what js_of_ocaml's primitive model invites) but has not been tried.
+5.2 names the first three and never calls them, which is why nobody noticed. (Its `dynlink` sources
+do not mention `parse_ld_conf` at all.) 5.5's `Dynlink` does call it, so the dummy is hit.
+
+So this is a fix on our side, not a wait for upstream: build the driver with the dynlink runtime
+linked in, or pass `--disable genprim` to turn the silent dummy into a build failure. Untried. Both
+programs use Dynlink — the driver through compiler-libs, the interpreter via `--dynlink` — so it is
+worth doing whatever version is chosen.
 
 For reference, 5.5 grows the stdlib too: 75 files / 5.94 MB against 5.2's 71 / 4.86 MB.
 

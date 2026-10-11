@@ -423,9 +423,26 @@ without argv plumbing.
 `jsoo_env` and `jsoo_fs_tmp` — all write-side. That is precisely what leaves the bytecode
 read-back open, and why the three options above are the whole list.
 
-**Unverified:** the browser (`fs_fake`) path itself. Node exercises `fs_node.js`. The same code
-path is intended, but this difference is exactly where an earlier bug hid, so it must be
-exercised rather than assumed.
+**Verified: the browser (`fs_fake`) path works.** Node normally exercises `fs_node.js`, but the
+driver was rebuilt with `--target-env=browser` — which selects `fs_fake` — and driven with every
+file registered and nothing on disk:
+
+```js
+globalThis.jsoo_fs_tmp = [ { name: 'main.ml', content }, /* ...the 71 stdlib files */ ];
+globalThis.jsoo_env = { OCAMLLIB: 'stdlib-min' };
+process.argv = ['node', 'compile_stdout', 'main.ml'];
+```
+
+```
+the driver on fs_fake       -> 44,563 hex chars -> 22,281 bytes of bytecode
+node jsoo.js that.byte -o - -> 28,557 bytes of JavaScript
+node that                   -> "fake fs ok"
+```
+
+So the entire source→JavaScript pipeline runs with **no filesystem at all** — the browser
+configuration, including the driver's internal round-trip of writing `.cmo`/`.byte` into the
+virtual filesystem and reading them back. What remains untested is only loading it from an actual
+browser page; the device, the registration queue, the environment and argv are all exercised.
 
 ### 3.3 The compilers are one-shot programs
 

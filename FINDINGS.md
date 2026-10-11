@@ -444,6 +444,35 @@ configuration, including the driver's internal round-trip of writing `.cmo`/`.by
 virtual filesystem and reading them back. What remains untested is only loading it from an actual
 browser page; the device, the registration queue, the environment and argv are all exercised.
 
+**The entry point: `compile(source) -> { js, diagnostics }`.** `tools/compile-stdout/compile.mjs`
+composes the two programs behind a single call. Verified with `test-entry.mjs`:
+
+```
+plain         -> js 28,561 bytes, diagnostics 0
+                 runs and prints: "entry point ok"
+compileError  -> compilation failed (exit 2), diagnostics
+                   [ 'File "main.ml", line 1, characters 14-20:',
+                     '1 | let x : int = "nope"',
+                     '                  ^^^^^^',
+                     'Error: This expression has type "string" but an expression',
+                     '       was expected of type "int"' ]
+```
+
+Two things this settled, both of which would otherwise have reached a user as an opaque failure:
+
+* **The compiler does not report its own errors — the caller must.** A type error arrived as
+  `Typecore.Error(_, _, _)` and nothing else until `Errors.report_error Format.err_formatter exn`
+  was called. That is the generic reporter for every compiler exception, and it prints the
+  message with location, source excerpt and caret. Wrapping `Compile` and calling it is the whole
+  fix.
+* **`Format` buffers, so flush before exiting.** Without
+  `Format.pp_print_flush Format.err_formatter ()` (and the std formatter, and `stdout`/`stderr`)
+  before `exit`, reported messages never reach the caller.
+
+The Node shape runs each compiler in its own process against real files. The **browser mirror** is
+the same two steps with one worker per compiler and the files registered into the virtual
+filesystem instead of written to disk — a configuration §3.2 has already verified.
+
 ### 3.3 The compilers are one-shot programs
 
 Each compiled compiler runs its `main` on load and exits. Using one repeatedly in the same

@@ -107,14 +107,18 @@ filesystem as its own artifact, rather than registering 71 files by hand at runt
 
 ### Step 4 — One entry point: source → JS
 
-Wrap both compilers behind a single call taking and returning in-memory data:
+**Done in the Node shape:** `tools/compile-stdout/compile.mjs` exposes
+`compile(source, { driver, jsoo, stdlib }) -> { js, diagnostics }`, with real compiler diagnostics
+— location, source excerpt and caret. `test-entry.mjs` runs it.
 
-```
-compile(source) -> { js, diagnostics }
-```
+What remains is the **browser mirror**: the same two steps, with one worker per compiler (each is
+a one-shot program that runs on load and exits, so it cannot be reused inside LiveCodes' shared
+compiler worker), and the files registered into the virtual filesystem instead of written to disk.
+§3.2 of FINDINGS has already verified that configuration.
 
-Remember each compiler is a **one-shot program** (runs on load, exits), so the likely shape is
-a worker per compile, created and terminated. See §3.3 of FINDINGS.
+One tuning item worth doing while here: the driver uses OCaml's default warning set, so an unused
+variable passes silently. The superseded interpreter enabled `+a`; the driver should probably do
+the same. `tools/compile-stdout/test-entry.mjs` has a `warning` case ready to show it.
 
 ### Step 5 — LiveCodes language entry
 

@@ -7,7 +7,7 @@
 # their paths (`opam var ocaml:lib`, the sources directory named for the
 # installed version) instead of hard-coding them, so moving to a new OCaml or
 # js_of_ocaml is these two lines. See "How to upgrade" in FINDINGS.md.
-ARG OCAML_VERSION=5.2
+ARG OCAML_VERSION=5.5
 FROM ocaml/opam:debian-12-ocaml-${OCAML_VERSION}
 
 # Pinned on purpose. The artifacts embed js_of_ocaml, so an unpinned install

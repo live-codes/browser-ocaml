@@ -30,6 +30,7 @@ stdlib__Format.cmi
 stdlib__Fun.cmi
 stdlib__Gc.cmi
 stdlib__Hashtbl.cmi
+stdlib__Iarray.cmi
 stdlib__In_channel.cmi
 stdlib__Int.cmi
 stdlib__Int32.cmi
@@ -47,11 +48,14 @@ stdlib__Obj.cmi
 stdlib__Oo.cmi
 stdlib__Option.cmi
 stdlib__Out_channel.cmi
+stdlib__Pair.cmi
 stdlib__Parsing.cmi
+stdlib__Pqueue.cmi
 stdlib__Printexc.cmi
 stdlib__Printf.cmi
 stdlib__Queue.cmi
 stdlib__Random.cmi
+stdlib__Repr.cmi
 stdlib__Result.cmi
 stdlib__Scanf.cmi
 stdlib__Semaphore.cmi

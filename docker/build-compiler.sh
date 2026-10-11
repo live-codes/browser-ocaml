@@ -76,8 +76,15 @@ opam exec -- js_of_ocaml "$jsoo_src/_build/default/compiler/bin-js_of_ocaml/js_o
   -o "$out/jsoo.js"
 
 echo "==> The driver, built for the browser filesystem"
+# `--dynlink` is what makes js_of_ocaml link its own dynlink runtime into the
+# driver: compile.ml adds "+dynlink.js" when toplevel or dynlink is set. The
+# driver pulls Dynlink in through compiler-libs, so without this js_of_ocaml
+# substitutes a raising dummy for each dynlink primitive. That is harmless while
+# nothing calls them -- and fatal as soon as a compiler version does, which OCaml
+# 5.5's Dynlink does. The build prints a "missing primitives" warning either way;
+# the flag is what silences it.
 opam exec -- dune build tools/compile-stdout/compile_stdout.bc
-opam exec -- js_of_ocaml compile --target-env=browser \
+opam exec -- js_of_ocaml compile --target-env=browser --dynlink \
   _build/default/tools/compile-stdout/compile_stdout.bc \
   -o "$out/compile_stdout.browser.js"
 

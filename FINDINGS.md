@@ -197,19 +197,20 @@ the Dockerfile is the same thing when it works out.
 opam show js_of_ocaml-compiler.<version> --field=depends | grep ocaml
 ```
 
-**Tried it — 5.5 is not usable as things stand.** Everything builds: the image, `jsoo.js`, the
-driver against 5.5's compiler-libs, and `build-fs` produces a byte-exact 75-file artifact. But the
-driver then dies at startup with
+**5.5 needed a fix on our side, and now works.**
+
+The first attempt built everything — the image, `jsoo.js`, the driver against 5.5's compiler-libs, a
+byte-exact 75-file `build-fs` artifact — and then the driver died at startup:
 
 ```
 [ 0, [ 248, 'Failure', -3 ], 'caml_dynlink_parse_ld_conf not implemented' ]
 ```
 
-The primitive is **not** missing from js_of_ocaml: `runtime/js/dynlink.js` provides it, and that
-chunk is byte-identical whether js_of_ocaml 6.4.1 was built on 5.2 or on 5.5 — 2924 bytes, the same
-`//Provides:` list, checked on both. What is missing is the **link**: the driver's own build does not
-pull the dynlink chunk in, so js_of_ocaml substitutes a raising dummy and says so in a warning that
-reads like a footnote:
+That is not an upstream gap. `runtime/js/dynlink.js` provides the primitive, and the chunk is
+byte-identical whether js_of_ocaml 6.4.1 was built on 5.2 or on 5.5 — 2924 bytes, same `//Provides:`
+list, checked on both. The driver's build simply never *linked* that chunk, so js_of_ocaml
+substituted a raising dummy and mentioned it only in a missing-primitives warning that reads like a
+footnote:
 
 ```
 Missing primitives provided by +dynlink.js:
@@ -219,15 +220,27 @@ Missing primitives provided by +dynlink.js:
   caml_dynlink_parse_ld_conf     <- listed only from 5.5 on
 ```
 
-5.2 names the first three and never calls them, which is why nobody noticed. (Its `dynlink` sources
-do not mention `parse_ld_conf` at all.) 5.5's `Dynlink` does call it, so the dummy is hit.
+5.2 named three of those and called none of them — its `dynlink` sources do not mention
+`parse_ld_conf` at all — which is why it went unnoticed. 5.5's `Dynlink` does call it.
 
-So this is a fix on our side, not a wait for upstream: build the driver with the dynlink runtime
-linked in, or pass `--disable genprim` to turn the silent dummy into a build failure. Untried. Both
-programs use Dynlink — the driver through compiler-libs, the interpreter via `--dynlink` — so it is
-worth doing whatever version is chosen.
+**The fix is one flag.** js_of_ocaml adds `+dynlink.js` itself:
 
-For reference, 5.5 grows the stdlib too: 75 files / 5.94 MB against 5.2's 71 / 4.86 MB.
+```ocaml
+(* compiler/bin-js_of_ocaml/compile.ml *)
+if (not no_runtime) && (toplevel || dynlink) then ... add_if_absent "+dynlink.js"
+```
+
+so the driver is now built with `--dynlink`, and the warning disappears. Verified on 5.5:
+`emit-check` reports no dummy primitives and the program prints all three lines, `verify-fs` matches
+the switch byte for byte across 75 files, and the interpreter passes all seven node cases including
+Dynlink. It was worth doing regardless of version: on 5.2 those dummies were latent, harmless only
+because nothing called them.
+
+**What 5.5 changes for us.** The stdlib grows to 75 files / 5.94 MB (from 71 / 4.86 MB), so
+`stdlib.js` is 5.67 MB and the driver 2.6 MB — `--dynlink` implies `linkall`. Compiler assets are
+~14 MB, the interpreter's 4.6 MB. Diagnostics also reword: 5.2 said `This expression has type
+"string" but an expression was expected of type "int"`, 5.5 says `This constant has type string but
+an expression was expected of type int`. Nothing should assert that text.
 
 **Rebuild, then verify.** Note that a container keeps running the image it was created from, so after
 rebuilding use `docker run --rm` (as below, and as `make compiler` / `make worker` do) or recreate
@@ -469,11 +482,11 @@ The whole source→JavaScript pipeline now runs in JavaScript. Three gotchas fou
 `tools/compile-stdout/minimal.sh` builds that set and verifies the pipeline against it — compile
 and link unchanged (`exit 0`, 44,654 hex chars, `main.byte` 22,327 bytes).
 
-Sizes for planning, first load: driver ~1.75 MB + `jsoo.js` 4.99 MB + `stdlib.js` 4.9 MB + runtime
-chunks 0.8 MB ≈ **12.4 MB**, cached after that. The standard library ships as 4.9 MB rather than the
-1.8 MB measured above because `build-fs` inlines a byte above 127 as a four-character escape — worth
-it to turn 71 requests per compile into one. LiveCodes' ruby-wasm and python-wasm are larger, so this
-is still in range.
+Sizes for planning, first load: driver ~2.6 MB + `jsoo.js` 5.02 MB + `stdlib.js` 5.67 MB + runtime
+chunks 0.8 MB ≈ **14 MB**, cached after that. The standard library ships as 5.67 MB rather than the
+1.8 MB measured above — 5.94 MB of files before escaping — because `build-fs` inlines a byte above 127
+as a four-character escape, and it is worth it to turn 75 requests per compile into one. LiveCodes'
+ruby-wasm and python-wasm are larger, so this is still in range.
 
 **Confirmed: the machinery IS emitted in a default build.** An earlier version of this file
 claimed otherwise. That was a **bad grep** — the generated code reaches the global object through
@@ -879,8 +892,8 @@ No mechanism exists. Two options:
 | `src/compiler/` | that API, its orchestration, and the worker harness |
 | `src/interpreter/` | the toplevel's API: `createCompiler({ baseUrl, args, files })` → `{ run, dispose, banner }` |
 | `bin/copy-assets.mjs` | `ocaml-copy-assets [dir] [--compiler\|--interpreter\|--all]` |
-| `assets/compiler/` | the two compiler programs, `stdlib.js` and the runtime chunks (~13 MB) |
-| `assets/interpreter/` | the toplevel, its interfaces and its libraries (~4.4 MB) |
+| `assets/compiler/` | the two compiler programs, `stdlib.js` and the runtime chunks (~14 MB) |
+| `assets/interpreter/` | the toplevel, its interfaces and its libraries (~4.6 MB) |
 | `test/` | `compiler.html`, `interpreter.html`, `interpreter-in-worker.html`, `node-check.mjs` |
 | `LICENSE` | LGPL-2.1-or-later WITH OCaml-LGPL-linking-exception |
 | `THIRD-PARTY-NOTICES.md` | what is whose inside the generated bundles |

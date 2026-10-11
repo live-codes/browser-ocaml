@@ -21,7 +21,7 @@ npx --package @live-codes/ocaml ocaml-copy-assets --compiler public/ocaml-compil
 ```
 
 `copy-assets` writes one implementation at a time — `--compiler`, `--interpreter`, or `--all` into
-subdirectories — so a compiler user never serves the interpreter's 4.4 MB, and the other way round.
+subdirectories — so a compiler user never serves the interpreter's 4.6 MB, and the other way round.
 Serve that directory and point `baseUrl` at it.
 
 ## The compiler
@@ -60,13 +60,13 @@ program runs in the page rather than as a process — the same trade every compi
 LiveCodes makes, and it is what buys page interaction, since the program *is* JavaScript by the time
 it runs. If you need a process-like contract, use the interpreter.
 
-About 13 MB of assets, fetched once and cacheable: 1.75 MB for the driver, 4.99 MB for js_of_ocaml,
-0.8 MB of the js_of_ocaml runtime chunks the compiler looks for while emitting, and 4.9 MB for the
-standard library. That last one is a single `js_of_ocaml build-fs` artifact carrying all 71 files
-rather than 71 fetched separately — 2.6× the size, because a byte above 127 inlines as an escape,
-but one request instead of 71 and nothing to assemble on the page. A small program compiles in about
-a second and emits roughly 70 KB — the JavaScript is pretty-printed, which is what a Compiled Code
-pane wants, and it keeps the output line-oriented.
+About 14 MB of assets, fetched once and cacheable: 2.6 MB for the driver, 5.02 MB for js_of_ocaml,
+0.8 MB of the js_of_ocaml runtime chunks the compiler looks for while emitting, and 5.67 MB for the
+standard library. That last one is a single `js_of_ocaml build-fs` artifact carrying all 75 files
+rather than 75 fetched separately — about 2.6× the size, because a byte above 127 inlines as an
+escape, but one request instead of 75 and nothing to assemble on the page. A small program compiles
+in about a second and emits roughly 70 KB — the JavaScript is pretty-printed, which is what a
+Compiled Code pane wants, and it keeps the output line-oriented.
 
 ## The interpreter
 

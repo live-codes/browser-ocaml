@@ -133,9 +133,10 @@ Two browser-only rules the harness depends on, both in FINDINGS §3.2: **never c
 (`fs_fake` wires fd 1/2 to `console.log`/`console.error`). Also: `TextDecoder('latin1')` is
 windows-1252 in browsers and corrupts binary files — convert byte by byte.
 
-One tuning item worth doing while here: the driver uses OCaml's default warning set, so an unused
-variable passes silently. The interpreter's toplevel enables `+a`; the driver should probably do
-the same. `tools/compile-stdout/test-entry.mjs` has a `warning` case ready to show it.
+The driver's warning level is already tuned: it sets `+a-70`, so an unused variable is reported
+rather than passing silently, with `-70` suppressing `Warning 70 [missing-mli]`. That suppression is
+the one thing to revisit if the compiler ever grows a mode that cares about `.mli` files.
+`tools/compile-stdout/test-entry.mjs` has a `warning` case that shows the current behaviour.
 
 ### Step 5 — LiveCodes language entry
 

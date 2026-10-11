@@ -139,13 +139,13 @@ only exist in a page — and that is where the two real harness bugs were found.
   LiveCodes meets the same rule and answers it the same way: its sandbox iframe's wasm languages
   create a same-origin worker that then `importScripts` the CDN.
   Verified cross-origin (page on one port, assets on another): the program compiled and ran.
-* **The harness worker now reports one stray diagnostic, and it is a regression we introduced.**
-  `importScripts` is reported as failing to load `jsoo.js`, in the same-origin case as well as
-  cross-origin, while the compile still succeeds and the output runs — so it is non-fatal but it is
-  user-visible, and it reached the diagnostics pane only after the worker stopped being created from
-  a same-origin URL. It appeared with both the data-URL and the blob-URL forms, which points at the
-  worker's script URL being unreadable (`self.location` is a `data:`/`blob:` URL) rather than at the
-  fetch. Fix it before wiring diagnostics into LiveCodes, where it would surface as a compile error.
+* **js_of_ocaml's runtime `importScripts`es its own chunk files, and that cannot work once the worker
+  is created from a data URL** — the trick that lets the compiler run from a CDN, since a worker
+  script must otherwise be same-origin. It still emits a correct bundle from the files it was handed,
+  so the only trace was a `NetworkError` naming `jsoo.js` on stderr. The harness's stderr is filtered
+  for that alongside the `exit` noise, on the same reasoning: a genuinely fatal load leaves no output
+  at all, and that case is reported separately. Verified clean both ways — same-origin, and with the
+  page on one port and the assets on another.
 * **Watch for the failure you cannot see.** A filtered build log hid a failed step, and a
   "byte-identical, so it works" claim turned out to describe a script that had aborted. Print exit
   codes, read the tail of the output, and re-run rather than infer.

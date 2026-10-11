@@ -11,11 +11,20 @@
 
 const lines = (text) => text.split('\n').filter((line) => line.trim() !== '');
 
-// js_of_ocaml is a command-line program and calls `exit` after writing its
-// output -- and in a browser-target build `exit` is not implemented, so it
-// raises. The output has already arrived by then, so this is noise rather than
-// a diagnostic. Filter it, since the CLI is not ours to change.
-const PHANTOM = /Function 'exit' not implemented/;
+// Two kinds of upstream noise reach the worker's stderr, and neither says anything
+// about the program being compiled:
+//
+//  - js_of_ocaml is a command-line program and calls `exit` after writing its
+//    output -- and in a browser-target build `exit` is not implemented, so it
+//    raises. The output has already arrived by then.
+//  - js_of_ocaml's runtime tries to `importScripts` its own chunk files, which
+//    cannot work once the worker is created from a data URL -- the trick that lets
+//    the compiler run from a CDN, since a worker script must otherwise be
+//    same-origin. It falls back to the files it was handed and the bundle is
+//    correct. A genuinely fatal load leaves no output at all, and that is reported
+//    separately by `compile`.
+const PHANTOM =
+	/Function 'exit' not implemented|Failed to execute 'importScripts'|^Uncaught NetworkError:/;
 const diagnosticsOf = (text) => lines(text).filter((line) => !PHANTOM.test(line));
 
 // Byte-for-byte, and deliberately not TextDecoder: in browsers "latin1" and
@@ -40,28 +49,22 @@ function hexToBytes(hex) {
 
 // A worker script has to be same-origin with whatever creates it: `new Worker()`
 // refuses a cross-origin URL, and CORS does not help -- it is the script fetch the
-// browser will not make. A data URL carries its own source, so there is nothing to
-// fetch and nothing to refuse, which is what lets the compiler run from a CDN.
-//
-// Everything the harness then loads is passed to it as an absolute URL, and
-// `importScripts` *does* accept cross-origin scripts, which `new Worker` does not.
+// browser will not make. So the worker is created from a small data URL whose only
+// job is to `importScripts` the harness, which *is* allowed across origins and then
+// loads everything else itself.
 //
 // A data URL rather than a blob because the compiler may itself be running inside a
-// worker, where `URL.createObjectURL` is not dependable.
-const harnessUrls = new Map();
+// worker, where `URL.createObjectURL` is not dependable. The URL is interpolated
+// into JavaScript, so it is quoted with `JSON.stringify` and base64-encoded: the
+// base64 form needs no escaping of its own.
+const toDataUrl = (content, type = 'text/javascript') =>
+	`data:${type};charset=UTF-8;base64,` + btoa(content);
 
-async function harnessFor(baseUrl) {
-	let url = harnessUrls.get(String(baseUrl));
-	if (!url) {
-		const source = await (await fetch(new URL('worker.js', baseUrl))).text();
-		url = 'data:text/javascript;charset=utf-8,' + encodeURIComponent(source);
-		harnessUrls.set(String(baseUrl), url);
-	}
-	return url;
-}
+const workerDataUrlFor = (script) =>
+	toDataUrl(`importScripts(${JSON.stringify(String(script))});`);
 
 async function runInWorker(baseUrl, script, files, env, argv, fs = []) {
-	const worker = new Worker(await harnessFor(baseUrl));
+	const worker = new Worker(workerDataUrlFor(new URL('worker.js', baseUrl).href));
 	return new Promise((resolve, reject) => {
 		worker.onmessage = (event) => {
 			worker.terminate();

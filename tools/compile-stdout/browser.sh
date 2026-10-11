@@ -24,6 +24,8 @@ cp "$ocamllib"/*.cmi stdlib-min/
 cp "$ocamllib"/stdlib.cma stdlib-min/
 cp "$ocamllib"/std_exit.cmo stdlib-min/
 cp "$ocamllib"/runtime-launch-info stdlib-min/
+# A manifest, so a page can fetch the set without a directory listing.
+(cd stdlib-min && ls | grep -v '^manifest.txt$' > manifest.txt)
 echo "files: $(ls stdlib-min | wc -l)"
 
 echo

@@ -45,38 +45,43 @@ let () =
     ~auto_include:Load_path.no_auto_include
     ~visible:[ Filename.current_dir_name; stdlib_dir ]
     ~hidden:[];
-  (* Format buffers, so anything the compiler reported has to be flushed before
-     stopping. Without this a type error reached the caller as an opaque
-     "Fatal error: exception Typecore.Error(_, _, _)" with the actual message
-     still sitting in the formatter's buffer. *)
-  let flush_and_exit code =
+  (* **Never call `exit`.** In a browser-target build it is not implemented --
+     `exit` raises `Invalid_argument "Function 'exit' not implemented"` -- so a
+     program that uses it works under node and dies in a browser. Return instead,
+     and let the caller tell success from failure by whether the hex arrived.
+     `Format` buffers too, so everything has to be flushed before returning. *)
+  let finish () =
     Format.pp_print_flush Format.err_formatter ();
     Format.pp_print_flush Format.std_formatter ();
     flush stdout;
-    flush stderr;
-    exit code
+    flush stderr
   in
+  let exception Failed in
   (* The compiler does not report its own errors; the caller has to.
      `Errors.report_error` handles every compiler exception and prints a proper
      message with a location. Left uncaught, a type error reached the caller as
-     "Typecore.Error(_, _, _)" and nothing else — which is what a browser would
+     "Typecore.Error(_, _, _)" and nothing else -- which is what a browser would
      have shown the user. *)
   let fail exn =
     Errors.report_error Format.err_formatter exn;
-    flush_and_exit 2
+    raise Failed
   in
   (try
-     Compile.implementation
-       ~start_from:Clflags.Compiler_pass.Parsing
-       ~source_file
-       ~output_prefix:prefix
-   with exn -> fail exn);
-  let cmo = prefix ^ ".cmo" in
-  let byte = prefix ^ ".byte" in
-  (* Absolute paths, because Bytelink resolves its arguments through Load_path
-     and a bare "main.cmo" was not being found there even with "." on the path. *)
-  let abs p = if Filename.is_relative p then Filename.concat (Sys.getcwd ()) p else p in
-  (try Bytelink.link [ abs (Filename.concat stdlib_dir "stdlib.cma"); abs cmo ] (abs byte) with
-   | exn -> fail exn);
-  print_string (hex_of_string (read_file byte));
-  flush_and_exit 0
+     (try
+        Compile.implementation
+          ~start_from:Clflags.Compiler_pass.Parsing
+          ~source_file
+          ~output_prefix:prefix
+      with exn -> fail exn);
+     let cmo = prefix ^ ".cmo" in
+     let byte = prefix ^ ".byte" in
+     (* Absolute paths, because Bytelink resolves its arguments through Load_path
+        and a bare "main.cmo" was not being found there even with "." on the path. *)
+     let abs p = if Filename.is_relative p then Filename.concat (Sys.getcwd ()) p else p in
+     (try Bytelink.link [ abs (Filename.concat stdlib_dir "stdlib.cma"); abs cmo ] (abs byte) with
+      | exn -> fail exn);
+     print_string (hex_of_string (read_file byte))
+   with
+   | Failed -> ()
+   | exn -> Errors.report_error Format.err_formatter exn);
+  finish ()

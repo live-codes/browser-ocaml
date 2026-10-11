@@ -111,10 +111,15 @@ filesystem as its own artifact, rather than registering 71 files by hand at runt
 `compile(source, { driver, jsoo, stdlib }) -> { js, diagnostics }`, with real compiler diagnostics
 — location, source excerpt and caret. `test-entry.mjs` runs it.
 
-What remains is the **browser mirror**: the same two steps, with one worker per compiler (each is
-a one-shot program that runs on load and exits, so it cannot be reused inside LiveCodes' shared
-compiler worker), and the files registered into the virtual filesystem instead of written to disk.
-§3.2 of FINDINGS has already verified that configuration.
+What remains is running it in an actual browser. **The harness is written**:
+`tools/compile-stdout/web/` has the worker (one compiler per worker — each is a one-shot program),
+the browser API, and a page. Serve the repo root and open
+`/tools/compile-stdout/web/index.html`; the page needs `work/compile_stdout.browser.js`,
+`work/stdlib-min/` and `../emit_probe/work/jsoo.js`, so run `browser.sh` and `pipeline.sh` first.
+
+Two browser-only rules the harness depends on, both in FINDINGS §3.2: **never call `exit`**
+(unimplemented in a browser-target build), and **capture output by overriding `console`**
+(`fs_fake` wires fd 1/2 to `console.log`/`console.error`).
 
 One tuning item worth doing while here: the driver uses OCaml's default warning set, so an unused
 variable passes silently. The superseded interpreter enabled `+a`; the driver should probably do

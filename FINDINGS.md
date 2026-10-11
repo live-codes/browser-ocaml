@@ -473,6 +473,21 @@ The Node shape runs each compiler in its own process against real files. The **b
 the same two steps with one worker per compiler and the files registered into the virtual
 filesystem instead of written to disk — a configuration §3.2 has already verified.
 
+**The browser harness.** `tools/compile-stdout/web/` mirrors `compile.mjs`: one worker per compiler
+(each is one-shot, so a worker cannot run two), every file registered through `jsoo_fs_tmp`, and
+the output captured by overriding `console`. Two findings make it work, and both are
+browser-only — neither shows up under node:
+
+* **`exit` is not implemented in a browser-target build.** A program that calls it works under
+  node and dies in a browser with `Invalid_argument "Function 'exit' not implemented"`. The driver
+  therefore **returns** rather than exiting, and the caller tells success from failure by whether
+  the hex arrived. This is a general rule for anything meant to run in both.
+* **With the fake filesystem, fd 1 and fd 2 are wired to `console.log` and `console.error`.**
+  `fs_fake.js:442-454` picks them as the sinks ("console.log / console.error always …"). So a
+  worker captures the compiler's output by replacing those two functions *before* loading it —
+  verified: the driver's 44,612 characters of hex arrive as a single console call. A worker has no
+  other way in, since the output never reaches a file the page can read.
+
 ### 3.3 The compilers are one-shot programs
 
 Each compiled compiler runs its `main` on load and exits. Using one repeatedly in the same

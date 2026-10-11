@@ -41,22 +41,29 @@ export function compile(source, { driver, jsoo, stdlib }) {
         maxBuffer: 256 * 1024 * 1024
       });
 
-    // Source -> bytecode. The driver prints it as hex, because a raw bytecode
-    // stream would not survive a text channel's encoding.
+    // Source -> bytecode, as hex. Success is "the hex arrived", not an exit
+    // code: the driver must not call `exit`, because in a browser-target build
+    // `exit` is not implemented.
     const front = run(driver, ['main.ml']);
     const diagnostics = lines(front.stderr.toString());
-    if (front.status !== 0) {
-      return { js: null, diagnostics, error: `compilation failed (exit ${front.status})` };
+    const hex = front.stdout.toString().trim();
+    if (!/^[0-9a-f]+$/.test(hex)) {
+      return { js: null, diagnostics, error: 'compilation failed' };
     }
-    writeFileSync(join(dir, 'main.byte'), Buffer.from(front.stdout.toString().trim(), 'hex'));
+    writeFileSync(join(dir, 'main.byte'), Buffer.from(hex, 'hex'));
 
-    // Bytecode -> JavaScript, on stdout.
+    // Bytecode -> JavaScript, on stdout. Same rule: go by the output.
     const back = run(jsoo, ['main.byte', '-o', '-']);
     const backDiagnostics = lines(back.stderr.toString());
-    if (back.status !== 0) {
-      return { js: null, diagnostics: [...diagnostics, ...backDiagnostics], error: `js_of_ocaml failed (exit ${back.status})` };
+    const js = back.stdout.toString();
+    if (back.status !== 0 || js.trim() === '') {
+      return {
+        js: null,
+        diagnostics: [...diagnostics, ...backDiagnostics],
+        error: `js_of_ocaml produced no output (exit ${back.status})`
+      };
     }
-    return { js: back.stdout.toString(), diagnostics: [...diagnostics, ...backDiagnostics] };
+    return { js, diagnostics: [...diagnostics, ...backDiagnostics] };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>OCaml to JavaScript, in a browser</title>
+    <style>
+      body { font: 14px/1.5 ui-monospace, Consolas, monospace; background: #1b1b1f; color: #e6e6e9; padding: 24px; }
+      h1 { font-size: 16px; }
+      h2 { font-size: 14px; }
+      textarea { width: 100%; height: 8em; background: #232329; color: inherit; border: 1px solid #35353f; border-radius: 6px; padding: 8px; font: inherit; }
+      button { font: inherit; background: #2d2d3a; color: inherit; border: 1px solid #35353f; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+      pre { background: #232329; border: 1px solid #35353f; border-radius: 6px; padding: 12px; white-space: pre-wrap; }
+      iframe { display: none; }
+      .muted { color: #9a9aa5; }
+    </style>
+  </head>
+  <body>
+    <h1>OCaml → JavaScript, in a browser</h1>
+    <p class="muted">
+      Two compilers, one per worker: the compiler-libs driver for source to bytecode, and
+      js_of_ocaml for bytecode to JavaScript. Nothing is written to disk — every file goes in
+      through the virtual filesystem.
+    </p>
+
+    <textarea id="source">let () =
+  let xs = List.init 5 (fun i -> i * i) in
+  Printf.printf "sum=%d squares=%s\n" (List.fold_left (+) 0 xs)
+    (String.concat "," (List.map string_of_int xs))</textarea>
+    <p><button id="compile">Compile</button> <span id="status" class="muted"></span></p>
+
+    <h2>Diagnostics</h2>
+    <pre id="diagnostics" class="muted">—</pre>
+    <h2>Program output</h2>
+    <pre id="output" class="muted">—</pre>
+    <h2>Generated JavaScript</h2>
+    <pre id="js" class="muted">—</pre>
+    <iframe id="runner"></iframe>
+
+    <script type="module">
+      import { loadStdlib, compile } from './compile.js';
+
+      const baseUrl = new URL('../work/', location.href);
+      const el = (id) => document.getElementById(id);
+      const say = (id, text) => { el(id).textContent = text; };
+
+      let stdlib;
+
+      el('compile').onclick = async () => {
+        el('compile').disabled = true;
+        say('diagnostics', '—');
+        say('output', '—');
+        say('js', '—');
+        try {
+          say('status', 'loading the stdlib…');
+          stdlib ??= await loadStdlib(new URL('stdlib-min/', baseUrl));
+          say('status', `compiling… (${stdlib.length} stdlib files loaded)`);
+
+          const started = performance.now();
+          const { js, diagnostics, error } = await compile(el('source').value, {
+            baseUrl,
+            driver: 'compile_stdout.browser.js',
+            jsoo: '../emit_probe/work/jsoo.js',
+            stdlib
+          });
+          const ms = Math.round(performance.now() - started);
+
+          if (diagnostics.length) say('diagnostics', diagnostics.join('\n'));
+          if (error) { say('status', `${error} (${ms} ms)`); return; }
+
+          say('status', `${js.length} bytes of JavaScript (${ms} ms)`);
+          say('js', `${js.slice(0, 400)}\n…`);
+          run(js);
+        } catch (e) {
+          say('status', String(e && e.message ? e.message : e));
+        } finally {
+          el('compile').disabled = false;
+        }
+      };
+
+      // Run the compiled program in an iframe and pipe its console back, so its
+      // output is visible here rather than only in devtools.
+      function run(js) {
+        const runner = el('runner');
+        runner.srcdoc = `<!DOCTYPE html><script>
+          window.onmessage = (event) => eval(event.data);
+          const send = (m) => parent.postMessage(String(m), '*');
+          console.log = (...a) => send(a.join(' '));
+          console.info = console.log;
+          console.warn = console.log;
+          console.error = (...a) => send('error: ' + a.join(' '));
+        <\/script>`;
+        runner.onload = () => runner.contentWindow.postMessage(js, '*');
+      }
+
+      window.onmessage = (event) => {
+        if (event.source !== el('runner').contentWindow) return;
+        if (el('output').textContent === '—') el('output').textContent = '';
+        el('output').textContent += `${event.data}\n`;
+      };
+    </script>
+  </body>
+</html>

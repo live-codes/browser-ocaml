@@ -13,7 +13,7 @@
 
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,17 +30,18 @@ const source = 'let () =\n  print_endline "first";\n  Printf.printf "second\\n";
 // It uses the browser filesystem, so its files arrive through jsoo_fs_tmp, and
 // its output arrives on console -- which is what both the browser and its
 // harness rely on.
-const stdlibDir = join(assets, 'stdlib');
-const stdlib = readdirSync(stdlibDir).map((name) => ({
-	name: `stdlib/${name}`,
-	content: readFileSync(join(stdlibDir, name), 'latin1')
-}));
-
+//
+// The standard library is one `js_of_ocaml build-fs` artifact. A worker mounts
+// it with importScripts; here it is evaluated, which is the same thing -- it
+// finds no runtime yet, so it queues its files on jsoo_fs_tmp, and the driver's
+// own runtime replays that queue at caml_fs_init. Its contents are bytestrings,
+// so evaluating it is byte-exact.
 const captured = [];
 const realConsoleLog = console.log;
 console.log = (...args) => captured.push(args.join(' '));
-globalThis.jsoo_fs_tmp = [{ name: 'main.ml', content: source }, ...stdlib];
-globalThis.jsoo_env = { OCAMLLIB: 'stdlib' };
+globalThis.jsoo_fs_tmp = [{ name: 'main.ml', content: source }];
+(0, eval)(readFileSync(join(assets, 'stdlib.js'), 'utf8'));
+globalThis.jsoo_env = { OCAMLLIB: '/stdlib' };
 globalThis.process = { argv: ['node', 'compile_stdout', 'main.ml'] };
 require(join(assets, 'compile_stdout.browser.js'));
 console.log = realConsoleLog;

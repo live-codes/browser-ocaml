@@ -7,10 +7,10 @@
 //
 // A page cannot read files out of node_modules, so the compiler assets have to
 // be published by whatever serves the page -- `ocaml-copy-assets` writes a copy
-// into a directory you serve, and `baseUrl` points at it. Starting the compiler
-// loads the standard library, so a bad baseUrl fails here rather than at the
-// first compile.
-import { compile as compileSource, loadStdlib } from './compile.js';
+// into a directory you serve, and `baseUrl` points at it. Creating a compiler
+// checks the assets are actually there, so a bad baseUrl fails here rather than
+// at the first compile.
+import { compile as compileSource } from './compile.js';
 
 export async function createCompiler({ baseUrl } = {}) {
 	if (!baseUrl) {
@@ -21,15 +21,26 @@ export async function createCompiler({ baseUrl } = {}) {
 		);
 	}
 	const base = new URL(baseUrl, globalThis.location?.href ?? 'http://localhost/');
-	const stdlib = await loadStdlib(new URL('stdlib/', base));
+
+	// The standard library is one 5 MB artifact, so it is not fetched just to
+	// prove it is reachable -- a HEAD is enough to catch a wrong baseUrl, and
+	// the worker's `importScripts` would fail much less legibly later.
+	const stdlib = new URL('stdlib.js', base);
+	const response = await fetch(stdlib, { method: 'HEAD' }).catch(() => null);
+	if (!response || !response.ok) {
+		throw new Error(
+			`No compiler assets at ${base}: ${stdlib} is not there. ` +
+				'Run `ocaml-copy-assets --compiler <dir>` and point baseUrl at the directory you serve.'
+		);
+	}
 
 	return {
-		banner: `ocaml compiler, ${stdlib.length} stdlib files`,
+		banner: 'ocaml compiler',
 		/** Compile a program. Returns `{ js, diagnostics, error? }`. */
 		compile(source) {
-			return compileSource(source, { baseUrl: base, stdlib });
+			return compileSource(source, { baseUrl: base });
 		}
 	};
 }
 
-export { compileSource as compile, loadStdlib };
+export { compileSource as compile };

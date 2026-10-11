@@ -9,7 +9,7 @@
 // (runtime/js/fs_fake.js). A worker has no other way in: the output never
 // reaches a file the page can read.
 self.onmessage = (event) => {
-	const { script, files, env, argv } = event.data;
+	const { script, files, env, argv, fs = [] } = event.data;
 	const out = [];
 	const err = [];
 	const realLog = console.log;
@@ -24,6 +24,12 @@ self.onmessage = (event) => {
 		// Browsers have no `process`; js_of_ocaml reads `process?.argv` for argv,
 		// so a fake one is enough. Note Sys.argv.(0) is argv[1].
 		globalThis.process = { argv };
+		// Filesystem artifacts first. Nothing has defined `jsoo_create_file` yet,
+		// so they queue their files on `jsoo_fs_tmp` -- and the program's runtime
+		// replays that queue at start-up. Loading them after the program would
+		// take the other branch and register the files directly, so the order is
+		// not load-bearing, but this is the cheaper one.
+		for (const url of fs) importScripts(url);
 		importScripts(script);
 		// The chunks go back as they arrived, not joined: the caller knows how to
 		// put them together, and joining here would lose the newlines between

@@ -103,15 +103,25 @@ require('./jsoo-browser.js');
   browser: the program prints. See FINDINGS §3.2.
 * Then confirm in a real browser page.
 
-### Step 3 — Trim and ship the stdlib
+### Step 3 — Ship the stdlib: done, as one artifact
 
-**Measured: 71 files / 1.8 MB**, down from 438 files / 49.5 MB. The set is exactly every `*.cmi`,
-plus `stdlib.cma`, `std_exit.cmo` and `runtime-launch-info`.
-`tools/compile-stdout/minimal.sh` builds it and verifies the pipeline still works against it.
+**Measured: 71 files / 1.8 MB**, down from 438 files / 49.5 MB. The set is exactly every `*.cmi`
+(68), plus `stdlib.cma`, `std_exit.cmo` and `runtime-launch-info`.
 
-What remains is only *how to ship it*: `js_of_ocaml build-fs -I DIR -o FILE [FILES]…` builds the
-filesystem as its own artifact, rather than registering 71 files by hand at runtime. `--file` and
-`--ofs` are the related options.
+`js_of_ocaml build-fs -I DIR -o out.js NAME:/stdlib/NAME …` builds the filesystem as its own
+artifact, and `packages/ocaml/assets/compiler/` now carries `stdlib.js` instead of a `stdlib/`
+directory plus a manifest — 4.9 MB rather than 1.8 MB, because a byte above 127 inlines as an escape
+(2.6×), but one request instead of 71 per compile, and no JavaScript assembling it. The worker
+mounts it with `importScripts` before the compiler program; the driver reads it through
+`OCAMLLIB=/stdlib`.
+
+Verified two ways: every one of the 71 files compared byte for byte after mounting, and end to end
+in a browser — no dummy primitives, and a three-line program printed all three lines in ~1.2 s.
+`tools/compile-stdout/emit-check.mjs` reproduces the same check outside a browser.
+
+The interpreter keeps its own mechanism deliberately: its 71 interfaces are fetched **on demand**, so
+a small program never downloads the ones it does not use. That is a different trade, and it is the
+one that makes `--no-cmis` viable there.
 
 ### Step 4 — One entry point: source → JS
 

@@ -66,15 +66,30 @@ opam exec -- js_of_ocaml compile --target-env=browser \
   -o "$out/compile_stdout.browser.js"
 
 echo "==> The standard library the compilers open"
-# Every .cmi (the compiler looks interfaces up by module name as it type-checks),
-# the code itself, and the two non-obvious entries the linker reads.
-mkdir -p "$out/stdlib"
-cp "$ocamllib"/*.cmi "$out/stdlib/"
-cp "$ocamllib"/stdlib.cma "$out/stdlib/"
-cp "$ocamllib"/std_exit.cmo "$out/stdlib/"
-cp "$ocamllib"/runtime-launch-info "$out/stdlib/"
-(cd "$out/stdlib" && ls | grep -v '^manifest.txt$' > manifest.txt)
-echo "    $(ls "$out/stdlib" | wc -l) files"
+# One artifact, not 71 files. `js_of_ocaml build-fs` writes a script that
+# registers each file in the pseudo filesystem -- through `jsoo_create_file`
+# when a runtime is already up, or by queueing on `jsoo_fs_tmp` when not, which
+# is exactly what the worker harness seeds. So the worker mounts it with
+# `importScripts` before the compiler program, and the program's runtime replays
+# the queue as it starts; nothing in JavaScript has to assemble the set.
+#
+# Contents are inlined as bytestrings (`Native_string.of_bytestring`), which is
+# byte-exact for a .cmi -- the trap here is a text decoding, and browsers alias
+# both "latin1" and "iso-8859-1" to windows-1252, which remaps 0x80-0x9F and
+# reads back as "Corrupted compiled interface".
+#
+# The set is every *.cmi (68), which the type-checker looks up by module name,
+# plus the three the linker reads: stdlib.cma, std_exit.cmo and
+# runtime-launch-info. Registration is flat, at /stdlib, and the driver is told
+# so through OCAMLLIB.
+rm -rf "$out/stdlib"
+set --
+for f in "$ocamllib"/*.cmi "$ocamllib"/stdlib.cma "$ocamllib"/std_exit.cmo "$ocamllib"/runtime-launch-info; do
+  n=$(basename "$f")
+  set -- "$@" "$n:/stdlib/$n"
+done
+opam exec -- js_of_ocaml build-fs -I "$ocamllib" -o "$out/stdlib.js" "$@"
+echo "    $# files -> $(wc -c < "$out/stdlib.js") bytes"
 
 echo "==> The worker harness"
 cp packages/ocaml/src/compiler/worker.js "$out/worker.js"

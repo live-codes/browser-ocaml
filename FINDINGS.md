@@ -245,8 +245,7 @@ under `OPTIONS (FILESYSTEM)`:
 
 Two consequences. First, the compiler-as-JS built here used defaults, so **external
 registration is allowed**. Second, `build-fs` builds the filesystem once as a separate
-artifact, which is a better mechanism for shipping the stdlib than registering hundreds of
-files by hand.
+artifact, which is how the stdlib is now shipped: one file instead of 71 registered by hand.
 
 **How outside registration actually works — and why it is enough.** A program runs its `main`
 on load, so a page cannot register a file *after* loading it. js_of_ocaml solves this with a
@@ -373,8 +372,11 @@ The whole source→JavaScript pipeline now runs in JavaScript. Three gotchas fou
 `tools/compile-stdout/minimal.sh` builds that set and verifies the pipeline against it — compile
 and link unchanged (`exit 0`, 44,654 hex chars, `main.byte` 22,327 bytes).
 
-Sizes for planning, first load: driver ~1.68 MB + `jsoo.js` 5.23 MB + stdlib 1.8 MB ≈ **8.7 MB**,
-cached after that. LiveCodes' ruby-wasm and python-wasm are larger, so this is in range.
+Sizes for planning, first load: driver ~1.75 MB + `jsoo.js` 4.99 MB + `stdlib.js` 4.9 MB + runtime
+chunks 0.8 MB ≈ **12.4 MB**, cached after that. The standard library ships as 4.9 MB rather than the
+1.8 MB measured above because `build-fs` inlines a byte above 127 as a four-character escape — worth
+it to turn 71 requests per compile into one. LiveCodes' ruby-wasm and python-wasm are larger, so this
+is still in range.
 
 **Confirmed: the machinery IS emitted in a default build.** An earlier version of this file
 claimed otherwise. That was a **bad grep** — the generated code reaches the global object through
@@ -780,7 +782,7 @@ No mechanism exists. Two options:
 | `src/compiler/` | that API, its orchestration, and the worker harness |
 | `src/interpreter/` | the toplevel's API: `createCompiler({ baseUrl, args, files })` → `{ run, dispose, banner }` |
 | `bin/copy-assets.mjs` | `ocaml-copy-assets [dir] [--compiler\|--interpreter\|--all]` |
-| `assets/compiler/` | the two compiler programs, the stdlib and the runtime chunks (~9.3 MB) |
+| `assets/compiler/` | the two compiler programs, `stdlib.js` and the runtime chunks (~13 MB) |
 | `assets/interpreter/` | the toplevel, its interfaces and its libraries (~4.4 MB) |
 | `test/` | `compiler.html`, `interpreter.html`, `interpreter-in-worker.html`, `node-check.mjs` |
 | `LICENSE` | LGPL-2.1-or-later WITH OCaml-LGPL-linking-exception |

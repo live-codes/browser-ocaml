@@ -38,7 +38,7 @@ function hexToBytes(hex) {
 	return bytes;
 }
 
-function runInWorker(baseUrl, script, files, env, argv) {
+function runInWorker(baseUrl, script, files, env, argv, fs = []) {
 	return new Promise((resolve, reject) => {
 		const worker = new Worker(new URL('worker.js', baseUrl));
 		worker.onmessage = (event) => {
@@ -49,7 +49,7 @@ function runInWorker(baseUrl, script, files, env, argv) {
 			worker.terminate();
 			reject(new Error(event.message || 'the compiler worker failed to load'));
 		};
-		worker.postMessage({ script, files, env, argv });
+		worker.postMessage({ script, files, env, argv, fs });
 	});
 }
 
@@ -81,19 +81,18 @@ async function loadRuntime(baseUrl) {
 	return runtimeChunks;
 }
 
-// The stdlib ships as plain files plus a manifest listing them, so the page can
-// fetch the set without needing a directory listing. 71 files, about 1.8 MB.
-export async function loadStdlib(baseUrl) {
-	const manifest = await (await fetch(new URL('manifest.txt', baseUrl))).text();
-	return Promise.all(
-		lines(manifest).map(async (name) => ({
-			name: `stdlib/${name}`,
-			content: bytesToString(
-				new Uint8Array(await (await fetch(new URL(name, baseUrl))).arrayBuffer())
-			)
-		}))
-	);
-}
+// The standard library the driver reads, as one `js_of_ocaml build-fs` artifact:
+// a script that registers every file in the pseudo filesystem, through
+// `jsoo_create_file` when a runtime is already up and by queueing on
+// `jsoo_fs_tmp` when not. The worker mounts it before the compiler program, and
+// the program's runtime replays the queue as it starts.
+//
+// It used to be 71 files, listed in a manifest and fetched one at a time on
+// every compile. One artifact is one request, and no JavaScript has to assemble
+// it. The files register at `/stdlib`, which is why `OCAMLLIB` below is
+// absolute rather than the bare name it used to be.
+const STDLIB = 'stdlib.js';
+const STDLIB_DIR = '/stdlib';
 
 /**
  * Compile OCaml source to JavaScript.
@@ -103,21 +102,22 @@ export async function loadStdlib(baseUrl) {
  * @param {string|URL} options.baseUrl - where the compiler assets are served from.
  * @param {string} [options.driver] - the source-to-bytecode program in that directory.
  * @param {string} [options.jsoo] - the bytecode-to-JavaScript program.
- * @param {{name: string, content: string}[]} options.stdlib - from `loadStdlib`.
+ * @param {string} [options.stdlib] - the filesystem artifact carrying the standard library.
  * @returns {Promise<{js: string|null, diagnostics: string[], error?: string}>}
  */
-export async function compile(source, { baseUrl, driver = 'compile_stdout.browser.js', jsoo = 'jsoo.js', stdlib }) {
+export async function compile(source, { baseUrl, driver = 'compile_stdout.browser.js', jsoo = 'jsoo.js', stdlib = STDLIB }) {
 	if (typeof source !== 'string') throw new TypeError('compile: source must be a string');
 	const runtimeFiles = await loadRuntime(baseUrl);
-	const files = [{ name: 'main.ml', content: source }, ...stdlib, ...runtimeFiles];
+	const files = [{ name: 'main.ml', content: source }, ...runtimeFiles];
 
 	// Source -> bytecode, as hex.
 	const front = await runInWorker(
 		baseUrl,
 		new URL(driver, baseUrl).href,
 		files,
-		{ OCAMLLIB: 'stdlib' },
-		['node', 'compile_stdout', 'main.ml']
+		{ OCAMLLIB: STDLIB_DIR },
+		['node', 'compile_stdout', 'main.ml'],
+		[new URL(stdlib, baseUrl).href]
 	);
 	const diagnostics = diagnosticsOf(front.err.join('\n'));
 	// The driver prints its hex with no newlines anywhere, so its chunks are

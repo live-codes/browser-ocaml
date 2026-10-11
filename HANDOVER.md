@@ -59,14 +59,25 @@ If that prints `probe ok`, the toolchain works and you can move on.
 
 ### Step 2 — Browser adapter: prove `fs_fake`
 
-The one unverified piece. Node uses `fs_node.js`; a browser uses `fs_fake.js`. Exercise the
-compilers with **all inputs coming from the virtual filesystem** (no real paths) so the same
-code path the browser will take is actually tested.
+Node uses `fs_node.js`; a browser uses `fs_fake.js`. Build the compilers with
+`--target-env=browser` and drive them with **no real files at all**:
 
-* Fake argv before loading: `globalThis.process = { argv: [...] }` (§3.1 of FINDINGS).
-* The compiler **already allows outside file registration** — `--extern-fs` is js_of_ocaml's
-  default — so the page can register files into its filesystem (§3.2 of FINDINGS).
-* Then verify in a real browser page (a plain HTML page served from the repo is enough).
+```js
+globalThis.process = { argv: ['js_of_ocaml', 'main.byte', '-o', 'out.js'] };
+globalThis.jsoo_fs_tmp = [
+  { name: 'main.byte', content: bytecodeBytes },
+  // the stdlib files, from build-fs or from disk
+];
+require('./jsoo-browser.js');
+```
+
+* `globalThis.process.argv` gives the compiler its arguments (§3.1 of FINDINGS).
+* `globalThis.jsoo_fs_tmp` queues files, which the program drains at `caml_fs_init` (§3.2).
+* Registration needs the **fake** device — `MlNodeDevice` has no `register`, so
+  `caml_create_file` raises `cannot register file` — hence `--target-env=browser`.
+* **Settle the output side first** (FINDINGS §3.2, "Open gap"): there is no JS-side read hook,
+  so either capture stdout or add a hook. That decision shapes the whole adapter.
+* Then confirm in a real browser page.
 
 ### Step 3 — Trim and ship the stdlib
 

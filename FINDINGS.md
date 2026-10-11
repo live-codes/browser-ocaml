@@ -245,9 +245,57 @@ under `OPTIONS (FILESYSTEM)`:
 | `build-fs [-I DIR] -o FILE [FILES]…` | **build a filesystem as its own artifact** |
 
 Two consequences. First, the compiler-as-JS built here used defaults, so **external
-registration is allowed** — the page or worker can register the source and the stdlib into the
-compiler's filesystem. Second, `build-fs` builds the filesystem once as a separate artifact,
-which is a better mechanism for shipping the stdlib than registering hundreds of files by hand.
+registration is allowed**. Second, `build-fs` builds the filesystem once as a separate
+artifact, which is a better mechanism for shipping the stdlib than registering hundreds of
+files by hand.
+
+**How outside registration actually works — and why it is enough.** A program runs its `main`
+on load, so a page cannot register a file *after* loading it. js_of_ocaml solves this with a
+pending queue (`runtime/js/fs.js`):
+
+```js
+//Provides: jsoo_create_file_extern
+function jsoo_create_file_extern(name, content) {
+  if (globalThis.jsoo_create_file) globalThis.jsoo_create_file(name, content);
+  else { if (!globalThis.jsoo_fs_tmp) globalThis.jsoo_fs_tmp = [];
+         globalThis.jsoo_fs_tmp.push({ name, content }); }
+}
+
+//Provides: caml_fs_init
+function caml_fs_init() {
+  var tmp = globalThis.jsoo_fs_tmp;
+  if (tmp) { for (var i = 0; i < tmp.length; i++) jsoo_create_file(tmp[i].name, tmp[i].content); }
+  globalThis.jsoo_create_file = jsoo_create_file;
+  globalThis.jsoo_fs_tmp = [];
+  return 0;
+}
+```
+
+So the page **queues files on `globalThis.jsoo_fs_tmp` before loading the compiler**, and the
+program drains the queue when it initialises its filesystem:
+
+```js
+globalThis.process = { argv: ['js_of_ocaml', 'main.byte', '-o', 'out.js'] };
+globalThis.jsoo_fs_tmp = [{ name: 'main.byte', content: bytecodeBytes } /* + stdlib files */];
+// now load the compiler
+```
+
+Registration needs a device with a `register` method. `MlFakeDevice` (browser) has one;
+`MlNodeDevice` does not — `caml_create_file` fails with `cannot register file` on the node
+filesystem. So **this path requires `--target-env=browser`**, or any build that mounts the fake
+device. Note that this is also why a tiny `MlFakeDevice` is mounted by `fs.js` itself
+(`jsoo_mount_point.push({ path: name, device: new MlFakeDevice(name, f) })`).
+
+**Open gap: reading the output back.** There is **no JS-side read hook** (no `jsoo_read_file`
+or equivalent). The compiler writes `out.js` *into* its filesystem, and JavaScript has no
+supported way to read it back out. Two options, and one must be chosen before the adapter is
+built:
+
+1. Have the compiler write to **stdout** and capture that — js_of_ocaml's default stdout
+   flusher is `console.log`, so a page can intercept it. Needs the compiler to support stdout
+   output (`-o` handling).
+2. Add a small hook/wrapper. `jsoo_mount_point` is a global array of `{ path, device }` and the
+   fake device holds file contents, so a JS-side read is *possible* but unsupported.
 
 **Unverified:** the browser (`fs_fake`) path itself. Node exercises `fs_node.js`. The same code
 path is intended, but this difference is exactly where an earlier bug hid, so it must be

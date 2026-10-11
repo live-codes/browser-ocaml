@@ -43,4 +43,12 @@ createServer((req, res) => {
 	}
 	res.writeHead(200, { 'content-type': TYPES[extname(path)] ?? 'application/octet-stream' });
 	res.end(readFileSync(path));
-}).listen(port, () => console.log(`serving ${root} on ${port}`));
+}).listen(port, () => {
+	console.log(`serving ${root} on ${port}`);
+	// The page worth clicking through to. Printed only when the served directory
+	// actually has it, since this will serve any root.
+	const demo = 'packages/ocaml/test/compiler.html';
+	if (existsSync(join(root, demo))) {
+		console.log(`compiler demo: http://localhost:${port}/${demo}`);
+	}
+});

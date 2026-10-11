@@ -59,7 +59,7 @@
           const { js, diagnostics, error } = await compile(el('source').value, {
             baseUrl,
             driver: 'compile_stdout.browser.js',
-            jsoo: '../emit_probe/work/jsoo.js',
+            jsoo: '../../emit_probe/work/jsoo.js',
             stdlib
           });
           const ms = Math.round(performance.now() - started);
@@ -81,6 +81,9 @@
       // output is visible here rather than only in devtools.
       function run(js) {
         const runner = el('runner');
+        // Attach the handler before setting srcdoc: an srcdoc load can finish
+        // before a handler assigned afterwards is installed.
+        runner.onload = () => runner.contentWindow.postMessage(js, '*');
         runner.srcdoc = `<!DOCTYPE html><script>
           window.onmessage = (event) => eval(event.data);
           const send = (m) => parent.postMessage(String(m), '*');
@@ -89,7 +92,6 @@
           console.warn = console.log;
           console.error = (...a) => send('error: ' + a.join(' '));
         <\/script>`;
-        runner.onload = () => runner.contentWindow.postMessage(js, '*');
       }
 
       window.onmessage = (event) => {

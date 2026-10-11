@@ -111,15 +111,19 @@ filesystem as its own artifact, rather than registering 71 files by hand at runt
 `compile(source, { driver, jsoo, stdlib }) -> { js, diagnostics }`, with real compiler diagnostics
 — location, source excerpt and caret. `test-entry.mjs` runs it.
 
-What remains is running it in an actual browser. **The harness is written**:
-`tools/compile-stdout/web/` has the worker (one compiler per worker — each is a one-shot program),
-the browser API, and a page. Serve the repo root and open
-`/tools/compile-stdout/web/index.html`; the page needs `work/compile_stdout.browser.js`,
-`work/stdlib-min/` and `../emit_probe/work/jsoo.js`, so run `browser.sh` and `pipeline.sh` first.
+**Verified in a real browser.** Serve the repo root, open
+`/tools/compile-stdout/web/index.html` and click Compile — it produces ~70 KB of JavaScript in
+~1.2 s with clean diagnostics. The page needs `work/compile_stdout.browser.js`, `work/stdlib-min/`
+and `../emit_probe/work/jsoo.js`, so run `browser.sh` and `pipeline.sh` first.
+
+Known gap: the page's "run the output" iframe shows nothing — plumbing in the test page, not the
+toolchain. The emitted JavaScript runs fine under node (`test-entry.mjs`), and LiveCodes uses the
+same console-override capture that is verified to work.
 
 Two browser-only rules the harness depends on, both in FINDINGS §3.2: **never call `exit`**
 (unimplemented in a browser-target build), and **capture output by overriding `console`**
-(`fs_fake` wires fd 1/2 to `console.log`/`console.error`).
+(`fs_fake` wires fd 1/2 to `console.log`/`console.error`). Also: `TextDecoder('latin1')` is
+windows-1252 in browsers and corrupts binary files — convert byte by byte.
 
 One tuning item worth doing while here: the driver uses OCaml's default warning set, so an unused
 variable passes silently. The superseded interpreter enabled `+a`; the driver should probably do

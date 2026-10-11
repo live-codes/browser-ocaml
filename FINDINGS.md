@@ -488,6 +488,29 @@ browser-only — neither shows up under node:
   verified: the driver's 44,612 characters of hex arrive as a single console call. A worker has no
   other way in, since the output never reaches a file the page can read.
 
+**Verified in a real browser.** `tools/compile-stdout/web/index.html` compiles its sample in
+~1.2 s and shows genuine js_of_ocaml output:
+
+```
+70668 bytes of JavaScript (1186 ms)
+diagnostics: —
+```
+
+Two bugs the browser caught that node never could:
+
+* **`TextDecoder('latin1')` is not byte-preserving.** In browsers, `latin1` and `iso-8859-1` are
+  both aliases for **windows-1252**, which remaps bytes 0x80–0x9F — enough to make every `.cmi`
+  unreadable: `Error: Corrupted compiled interface "stdlib/stdlib.cmi"`. Convert byte by byte
+  (`String.fromCharCode`, chunked, because a 1.6 MB `.cma` overflows the argument list).
+* **The js_of_ocaml CLI calls `exit` after writing its output**, and in a browser-target build
+  `exit` is unimplemented, so it raises. The output has already arrived by then, so the harness
+  filters that message instead of reporting a phantom error.
+
+**One thing not working:** the page's own "run the output" iframe shows nothing. That is plumbing
+in the test page, not the toolchain — the emitted JavaScript's runnability is proven under node
+(`test-entry.mjs` runs each compiled program and checks its output), and LiveCodes captures program
+output by overriding `console`, the same mechanism verified above.
+
 ### 3.3 The compilers are one-shot programs
 
 Each compiled compiler runs its `main` on load and exits. Using one repeatedly in the same

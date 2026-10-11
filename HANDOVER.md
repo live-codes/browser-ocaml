@@ -139,10 +139,13 @@ only exist in a page — and that is where the two real harness bugs were found.
   LiveCodes meets the same rule and answers it the same way: its sandbox iframe's wasm languages
   create a same-origin worker that then `importScripts` the CDN.
   Verified cross-origin (page on one port, assets on another): the program compiled and ran.
-* **Running cross-origin adds one stray diagnostic**: `importScripts` reported failing to load
-  `jsoo.js`, yet the compile succeeded and the output ran, so it is non-fatal and unexplained. It
-  appears with both the data-URL and blob-URL worker forms, and *not* same-origin, so it is about the
-  cross-origin fetch rather than the worker. Worth chasing before diagnostics are surfaced to users.
+* **The harness worker now reports one stray diagnostic, and it is a regression we introduced.**
+  `importScripts` is reported as failing to load `jsoo.js`, in the same-origin case as well as
+  cross-origin, while the compile still succeeds and the output runs — so it is non-fatal but it is
+  user-visible, and it reached the diagnostics pane only after the worker stopped being created from
+  a same-origin URL. It appeared with both the data-URL and the blob-URL forms, which points at the
+  worker's script URL being unreadable (`self.location` is a `data:`/`blob:` URL) rather than at the
+  fetch. Fix it before wiring diagnostics into LiveCodes, where it would surface as a compile error.
 * **Watch for the failure you cannot see.** A filtered build log hid a failed step, and a
   "byte-identical, so it works" claim turned out to describe a script that had aborted. Print exit
   codes, read the tail of the output, and re-run rather than infer.

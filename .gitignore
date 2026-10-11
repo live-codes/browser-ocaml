@@ -7,5 +7,8 @@ _build/
 # packages/ocaml/assets/
 # A scratch directory the interpreter writes fetched libraries into at run time.
 ocaml-wasm-libs/
+# A fixture the interpreter's node check writes: under node it registers files on
+# the real filesystem rather than in memory, so running the check leaves this behind.
+d.txt
 .opam/
 *.install

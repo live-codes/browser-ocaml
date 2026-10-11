@@ -173,7 +173,7 @@ node out.js
 Two versions decide everything, and both are declared in `docker/Dockerfile` and nowhere else:
 
 ```dockerfile
-ARG OCAML_VERSION=5.2
+ARG OCAML_VERSION=5.5
 FROM ocaml/opam:debian-12-ocaml-${OCAML_VERSION}
 ARG JS_OF_OCAML_VERSION=6.4.1
 ```

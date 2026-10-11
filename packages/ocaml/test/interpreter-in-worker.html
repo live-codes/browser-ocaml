@@ -36,7 +36,7 @@
       }).catch(() => {});
 
       let nextId = 1;
-      const worker = new Worker('./host-worker.js');
+      const worker = new Worker('./interpreter-host-worker.js');
 
       const ready = new Promise((resolve) => {
         const onMessage = (event) => {

@@ -18,9 +18,13 @@ self.ocamlWasm.setBaseUrl(new URL('./', self.location.href).href);
 
 self.addEventListener('message', (event) => {
   const result = self.ocamlWasm.run(event.data);
+  // The exit code travels as it is. `postMessage` clones null perfectly well,
+  // and stringifying it -- which this used to do -- turned "never ran" into the
+  // string "null", which the caller then compared against null, failed, and
+  // turned into NaN.
   self.postMessage([
     'result',
-    result.exitCode === null ? 'null' : String(result.exitCode),
+    result.exitCode,
     result.stdout,
     result.stderr,
     result.outcome,

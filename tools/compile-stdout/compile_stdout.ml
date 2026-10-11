@@ -45,6 +45,11 @@ let () =
     ~auto_include:Load_path.no_auto_include
     ~visible:[ Filename.current_dir_name; stdlib_dir ]
     ~hidden:[];
+  (* Warnings are opt-in in OCaml, and an unused variable is worth saying out
+     loud in a playground. Same set the superseded toplevel asked for. `false`
+     means a warning is not fatal, and the result is only an `alert` if the
+     string names one we do not know. *)
+  ignore (Warnings.parse_options false "+a");
   (* **Never call `exit`.** In a browser-target build it is not implemented --
      `exit` raises `Invalid_argument "Function 'exit' not implemented"` -- so a
      program that uses it works under node and dies in a browser. Return instead,

@@ -90,9 +90,13 @@ require('./jsoo-browser.js');
 * **`fs_fake` is verified.** The driver rebuilt for the browser target, with all 72 files
   registered and nothing on disk, produces bytecode that goes through `jsoo.js -o -` to
   JavaScript that runs. See FINDINGS §3.2.
-* **Remaining on the OCaml side:** fold the two programs into one entry point returning
-  `{ js, diagnostics }`, and load it from an actual browser page. The stdlib is measured
-  (Step 3); shipping it is the `build-fs` question.
+* **Remaining on the OCaml side:** one real blocker, then packaging. The blocker is that a compiled
+  program **produces no output in a browser** — it runs, but nothing it prints arrives. Node is
+  unaffected. See FINDINGS §3.2 for the evidence and the two things to try first. **The package must
+  not be published until that is fixed.** Everything else in the package is in place: both
+  implementations behind separate entry points, an LGPL-2.1-or-later WITH
+  OCaml-LGPL-linking-exception license, a reproducible guarded build, and metadata set for a public
+  scoped release.
 * Then confirm in a real browser page.
 
 ### Step 3 — Trim and ship the stdlib

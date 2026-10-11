@@ -12,7 +12,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 
-const assets = new URL('../assets/', import.meta.url);
+const assets = new URL('../assets/interpreter/', import.meta.url);
 
 // The runtime addresses itself through `self`, the way it does in a worker.
 globalThis.self = globalThis;

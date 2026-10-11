@@ -1,23 +1,28 @@
 #!/usr/bin/env node
-// Copies the runtime assets that ship inside this package into a directory you serve.
+// Copies the assets an implementation needs into a directory you serve.
 //
-// This is the browser story: a page cannot read a file inside node_modules, so the assets have to be
-// published by whatever serves the page. One command drops a complete copy into your public
-// directory; point `baseUrl` at it and nothing else has to be hosted.
+// A page cannot read a file out of node_modules, so the runtime assets have to
+// be published by whatever serves the page. This writes the set for one
+// implementation at a time, so using the compiler does not mean serving the
+// interpreter's assets or the other way round.
 import { cp, mkdir, readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ASSETS = fileURLToPath(new URL('../assets/', import.meta.url));
 
-const USAGE = `Copy the OCaml runtime assets that ship with this package into a directory you serve.
+const USAGE = `Copy the OCaml assets that ship with this package into a directory you serve.
 
-  ocaml-copy-assets [directory]
+  ocaml-copy-assets [directory] [--compiler|--interpreter|--all]
 
-  directory   where to write them (default: ./ocaml)
-
+  directory      where to write them (default: ./ocaml)
+  --compiler     the compiler: the two compiler programs and the stdlib (default)
+  --interpreter  the toplevel: its runtime, interfaces and libraries
+  --all          both, each in its own subdirectory
   --print-path   print the packaged assets directory and exit
   --help         print this
+
+The default is --compiler, so a compiler user serves nothing they do not need.
 `;
 
 const args = process.argv.slice(2);
@@ -30,16 +35,37 @@ if (args.includes('--print-path')) {
 	process.exit(0);
 }
 
-const target = resolve(args.find((arg) => !arg.startsWith('-')) ?? 'ocaml');
+const which = args.includes('--all')
+	? ['compiler', 'interpreter']
+	: args.includes('--interpreter')
+		? ['interpreter']
+		: ['compiler'];
 
-await mkdir(target, { recursive: true });
-for (const entry of await readdir(ASSETS, { withFileTypes: true })) {
-	await cp(resolve(ASSETS, entry.name), resolve(target, entry.name), {
-		recursive: true,
-		force: true
-	});
+const root = resolve(args.find((arg) => !arg.startsWith('-')) ?? 'ocaml');
+
+// One implementation is written straight into the target directory so that
+// `baseUrl` is simply that directory; both are nested, because each has its own
+// `stdlib/` and they would collide.
+const targetFor = (implementation) =>
+	which.length === 1 ? root : resolve(root, implementation);
+
+for (const implementation of which) {
+	const source = resolve(ASSETS, implementation);
+	const target = targetFor(implementation);
+	await mkdir(target, { recursive: true });
+	for (const entry of await readdir(source, { withFileTypes: true })) {
+		await cp(resolve(source, entry.name), resolve(target, entry.name), {
+			recursive: true,
+			force: true
+		});
+	}
+	console.log(`${implementation} assets copied to ${target}`);
 }
 
-console.log(`Runtime assets copied to ${target}`);
-console.log('Serve that directory and pass its URL as baseUrl, for example:');
-console.log("  await createCompiler({ baseUrl: new URL('/ocaml/', location.href) });");
+console.log('');
+console.log('Serve those directories and pass the URL as baseUrl:');
+for (const implementation of which) {
+	console.log(
+		`  ${implementation}: new URL('${which.length === 1 ? '/' : `/${implementation}/`}', location.href)`
+	);
+}

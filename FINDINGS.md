@@ -488,6 +488,34 @@ browser-only — neither shows up under node:
   verified: the driver's 44,612 characters of hex arrive as a single console call. A worker has no
   other way in, since the output never reaches a file the page can read.
 
+**Open, and it blocks the package: a compiled program produces no output in a browser.** The
+pipeline works — source compiles to ~64 KB of JavaScript in ~1.5 s, diagnostics arrive, the emitted
+program *runs* — but nothing it prints arrives anywhere:
+
+```
+Program output: (program returned)        # and nothing else
+```
+
+Reproduced with `print_endline`, which flushes, and with `Printf.printf`, so this is **not**
+buffering (an earlier theory here said it was). Node is unaffected: the same pipeline's output
+prints under node, repeatedly and reliably. Script injection and console capture both work in the
+page — a marker script is captured — so the fault is in how the emitted program's stdout is wired in
+a browser build, not in the test page's runner. Passing `--target-env=browser` to the js_of_ocaml
+step changed the bundle (70,668 → 64,536 bytes) without changing this.
+
+Next things to try, in order:
+
+1. **Whether `jsoo.js` emits a program with an incomplete runtime.** The CLI resolves runtime chunk
+   files through `Fs`, which is a filesystem — and in a browser there are none. The driver's own
+   build already warned about missing primitives (`+dynlink.js`, `+toplevel.js`); the emitted
+   program may be missing more. Registering the chunks from `lib/js_of_ocaml-compiler/*.js` into
+   the worker's virtual filesystem would settle it.
+2. **Whether the browser build needs a real `caml_sys_exit`** rather than the generated stub.
+
+**Do not publish until this is resolved.** A compiler whose output does not print is not usable,
+however well the compilation itself works, and it is the one thing standing between this package
+and a release.
+
 **Verified in a real browser.** `tools/compile-stdout/web/index.html` compiles its sample in
 ~1.2 s and shows genuine js_of_ocaml output:
 

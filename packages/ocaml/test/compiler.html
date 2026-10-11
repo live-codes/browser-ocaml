@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>@live-codes/ocaml — compiler</title>
+    <style>
+      body { font: 14px/1.5 ui-monospace, Consolas, monospace; background: #1b1b1f; color: #e6e6e9; padding: 24px; }
+      h1 { font-size: 16px; }
+      h2 { font-size: 14px; }
+      textarea { width: 100%; height: 8em; background: #232329; color: inherit; border: 1px solid #35353f; border-radius: 6px; padding: 8px; font: inherit; }
+      button { font: inherit; background: #2d2d3a; color: inherit; border: 1px solid #35353f; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+      pre { background: #232329; border: 1px solid #35353f; border-radius: 6px; padding: 12px; white-space: pre-wrap; }
+      .muted { color: #9a9aa5; }
+    </style>
+  </head>
+  <body>
+    <h1>@live-codes/ocaml — compiler</h1>
+    <p class="muted">
+      Compiles the program below to JavaScript in a browser, then runs it. Two compilers, one per
+      worker; nothing is written to disk.
+    </p>
+
+    <textarea id="source">let () =
+  print_endline "first";
+  Printf.printf "second\n";
+  print_endline "third"</textarea>
+    <p><button id="compile">Compile and run</button> <span id="status" class="muted"></span></p>
+
+    <h2>Diagnostics</h2>
+    <pre id="diagnostics" class="muted">—</pre>
+    <h2>Program output</h2>
+    <pre id="output" class="muted">—</pre>
+    <h2>Generated JavaScript</h2>
+    <pre id="js" class="muted">—</pre>
+
+    <script type="module">
+      import { createCompiler } from '../src/compiler/index.js';
+
+      const el = (id) => document.getElementById(id);
+      const say = (id, text) => { el(id).textContent = text; };
+
+      // The package's own assets, staged by docker/build-compiler.sh.
+      const compiler = createCompiler({ baseUrl: new URL('../assets/compiler/', location.href) });
+
+      el('compile').onclick = async () => {
+        el('compile').disabled = true;
+        say('diagnostics', '—');
+        say('output', '—');
+        say('js', '—');
+        try {
+          say('status', 'loading the compiler…');
+          const started = performance.now();
+
+          const { js, diagnostics, error } = await (await compiler).compile(el('source').value);
+          const ms = Math.round(performance.now() - started);
+
+          if (diagnostics.length) say('diagnostics', diagnostics.join('\n'));
+          if (error) { say('status', `${error} (${ms} ms)`); return; }
+
+          say('status', `${js.length} bytes of JavaScript (${ms} ms)`);
+          say('js', `${js.slice(0, 400)}\n…`);
+          run(js);
+        } catch (e) {
+          say('status', String(e && e.message ? e.message : e));
+        } finally {
+          el('compile').disabled = false;
+        }
+      };
+
+      // Run the compiled program and collect what it prints. The compiler's own
+      // output arrives on console, because a browser filesystem wires fd 1 and 2
+      // to console.log and console.error; a compiled program should behave the
+      // same way, so overriding console is all that is needed. Indirect eval
+      // rather than a script element, so the program gets a global scope as it
+      // expects *and* errors propagate here instead of vanishing.
+      function run(js) {
+        const realLog = console.log;
+        const realError = console.error;
+        const append = (m) => {
+          if (el('output').textContent === '—') el('output').textContent = '';
+          el('output').textContent += `${m}\n`;
+        };
+
+        console.log = (...a) => append(a.join(' '));
+        console.error = (...a) => append(`error: ${a.join(' ')}`);
+        const onError = (event) => append(`uncaught: ${event.message}`);
+
+        window.addEventListener('error', onError);
+        try {
+          // Indirect eval: global scope, as a program expects, but errors
+          // propagate to us instead of vanishing into a script element.
+          (0, eval)(js);
+          append('(program returned)');
+        } catch (e) {
+          append(`threw: ${e && e.message ? e.message : e}`);
+        } finally {
+          console.log = realLog;
+          console.error = realError;
+          window.removeEventListener('error', onError);
+        }
+      }
+    </script>
+  </body>
+</html>

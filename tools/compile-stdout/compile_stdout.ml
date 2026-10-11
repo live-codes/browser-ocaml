@@ -26,12 +26,24 @@ let read_file path =
   close_in ic;
   s
 
+(* Config.standard_library is an absolute path baked in when OCaml was built, so
+   it cannot resolve in a browser. Honour OCAMLLIB/CAMLLIB the way the compiler
+   tools do -- which also lets a page point it somewhere through `jsoo_env`. *)
+let stdlib_dir =
+  let non_empty = function Some d when d <> "" -> Some d | _ -> None in
+  match non_empty (Sys.getenv_opt "OCAMLLIB") with
+  | Some d -> d
+  | None -> (
+      match non_empty (Sys.getenv_opt "CAMLLIB") with
+      | Some d -> d
+      | None -> Config.standard_library)
+
 let () =
   let source_file = Sys.argv.(1) in
   let prefix = if Array.length Sys.argv > 2 then Sys.argv.(2) else Filename.remove_extension source_file in
   Load_path.init
     ~auto_include:Load_path.no_auto_include
-    ~visible:[ Config.standard_library ]
+    ~visible:[ Filename.current_dir_name; stdlib_dir ]
     ~hidden:[];
   Compile.implementation
     ~start_from:Clflags.Compiler_pass.Parsing
@@ -39,5 +51,16 @@ let () =
     ~output_prefix:prefix;
   let cmo = prefix ^ ".cmo" in
   let byte = prefix ^ ".byte" in
-  Bytelink.link [ Filename.concat Config.standard_library "stdlib.cma"; cmo ] byte;
+  (* Absolute paths, because Bytelink resolves its arguments through Load_path
+     and a bare "main.cmo" was not being found there even with "." on the path. *)
+  let abs p = if Filename.is_relative p then Filename.concat (Sys.getcwd ()) p else p in
+  (* Report rather than raise: an opaque exception is useless to a caller, and
+     the caller here is a browser that has to turn this into diagnostics. *)
+  (try Bytelink.link [ abs (Filename.concat stdlib_dir "stdlib.cma"); abs cmo ] (abs byte) with
+   | Bytelink.Error e ->
+       Bytelink.report_error Format.err_formatter e;
+       exit 2
+   | exn ->
+       prerr_endline ("compile_stdout: " ^ Printexc.to_string exn);
+       exit 2);
   print_string (hex_of_string (read_file byte))

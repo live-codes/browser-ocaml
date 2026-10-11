@@ -83,8 +83,13 @@ require('./jsoo-browser.js');
   and *not* the same as omitting `-o`, which prints nothing). The intermediate bytecode comes out
   of `tools/compile-stdout/` — our own compiler-libs driver — as **hex** on stdout, so no
   read-back and no patch. The full loop is verified end to end; see FINDINGS §3.2.
-* **Remaining on the OCaml side:** trim and ship the stdlib (Step 3), and prove `fs_fake` in a
-  real browser — everything so far is Node.
+* **The driver also runs as JavaScript — verified.** `process.argv` + `jsoo_env` drive it, and
+  its bytecode goes through `jsoo.js -o -` to JavaScript that runs. The whole source→JS pipeline
+  is JavaScript end to end. FINDINGS §3.2 has the two gotchas (absolute paths for `Bytelink`;
+  the argv convention) — read them before debugging anything here.
+* **Remaining on the OCaml side:** trim and ship the stdlib (Step 3), prove `fs_fake` in a real
+  browser (everything so far is Node), and fold the two programs into one entry point that also
+  returns diagnostics.
 * Then confirm in a real browser page.
 
 ### Step 3 — Trim and ship the stdlib

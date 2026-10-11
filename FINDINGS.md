@@ -338,6 +338,36 @@ The alternatives were not needed: sharing one filesystem, reading the fake devic
 (`MlFakeDevice.register` stores into `this.content[name]`, but the device is not exposed), or
 patching ocamlc.
 
+**And the driver runs as JavaScript.** Built with js_of_ocaml and driven the way a browser would
+drive it — argv through `process.argv`, the stdlib located through `jsoo_env`:
+
+```js
+process.argv = ['node', 'compile_stdout', 'main.ml'];
+globalThis.jsoo_env = { OCAMLLIB: 'stdlib-ocaml' };
+require('./compile_stdout.js');
+```
+
+```
+the JS driver                 -> 44,566 hex chars -> 22,283 bytes of bytecode
+node jsoo.js js.byte -o -     -> 28,559 bytes of JavaScript
+node that                     -> "js driver ok"
+```
+
+The whole source→JavaScript pipeline now runs in JavaScript. Three gotchas found getting there:
+
+* **`Bytelink.link` resolves its arguments through `Load_path`**, and a bare `main.cmo` was not
+  found there even with `.` on the path. It has to be given an **absolute** path
+  (`Filename.concat (Sys.getcwd ()) cmo`). Before that fix it failed on a clean directory but
+  silently linked a *stale* `main.cmo`/`main.byte` from a dirty one — which is exactly why
+  results looked flaky and inconsistent between runs. Compare *behaviour*, not bytes: the native
+  and JS outputs differ by ~39 bytes of embedded build info.
+* **The argv convention is `Sys.argv.(0)` = `process.argv[1]`, `Sys.argv.(1)` =
+  `process.argv[2]`** (`sys.js` builds `[0, argv[1], ...argv.slice(2)]`). Passing
+  `['prog', 'main.ml']` leaves `Sys.argv` with nothing past index 0.
+* **The stdlib subset the linker needs** so far is `*.cmi`, `*.cma`, `*.cmo` (for
+  `std_exit.cmo`) and **`runtime-launch-info`** — the same two non-obvious entries `ocamlc`
+  wanted. This is the starting point for trimming (HANDOVER Step 3).
+
 **Confirmed: the machinery IS emitted in a default build.** An earlier version of this file
 claimed otherwise. That was a **bad grep** — the generated code reaches the global object through
 a minified alias, so searching for `globalThis.jsoo_*` finds nothing. Search for the property

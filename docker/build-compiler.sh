@@ -65,14 +65,14 @@ fi
 
 echo "==> js_of_ocaml as bytecode"
 # dune wants a git repository for version detection; its absence is fatal.
-[ -d "$src/.git" ] || (cd "$src" && git init -q)
-cd "$src"
+[ -d "$jsoo_src/.git" ] || (cd "$jsoo_src" && git init -q)
+cd "$jsoo_src"
 opam exec -- dune build compiler/bin-js_of_ocaml/js_of_ocaml.bc
 
 echo "==> js_of_ocaml as JavaScript"
 cd /home/opam/src
 mkdir -p "$out"
-opam exec -- js_of_ocaml "$src/_build/default/compiler/bin-js_of_ocaml/js_of_ocaml.bc" \
+opam exec -- js_of_ocaml "$jsoo_src/_build/default/compiler/bin-js_of_ocaml/js_of_ocaml.bc" \
   -o "$out/jsoo.js"
 
 echo "==> The driver, built for the browser filesystem"

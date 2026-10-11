@@ -8,7 +8,7 @@
 // The originals live in the container and node does not, so this prints hashes
 // to compare rather than comparing itself:
 //
-//   docker exec ocaml-toolchain sh -c \
+//   docker run --rm ocaml-toolchain sh -c \
 //     'cd $(opam var ocaml:lib) && sha256sum *.cmi stdlib.cma std_exit.cmo runtime-launch-info | LC_ALL=C sort -k2' \
 //     > originals.txt
 //   node tools/compile-stdout/verify-fs.mjs > artifact.txt

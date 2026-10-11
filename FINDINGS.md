@@ -189,13 +189,39 @@ two lines, a rebuild and the checks below. Nothing else in the tree names a vers
 The build args exist so a candidate can be tried without touching the tree; editing the defaults in
 the Dockerfile is the same thing when it works out.
 
-**Compatibility is not ours to decide.** `js_of_ocaml-compiler` declares
-`ocaml {>= "4.13" & < "5.6"}`, so 5.2 and 5.5 are both inside it — but check that bound before
-assuming for anything newer:
+**Compatibility is not ours to decide, and the constraint is not the whole story.**
+
+`js_of_ocaml-compiler` declares `ocaml {>= "4.13" & < "5.6"}`, so 5.5 is nominally inside it:
 
 ```sh
 opam show js_of_ocaml-compiler.<version> --field=depends | grep ocaml
 ```
+
+**Tried it — 5.5 is not usable yet.** Everything builds: the image, `jsoo.js`, the driver against
+5.5's compiler-libs, and `build-fs` produces a byte-exact 75-file artifact. But the driver then dies
+at startup with
+
+```
+[ 0, [ 248, 'Failure', -3 ], 'caml_dynlink_parse_ld_conf not implemented' ]
+```
+
+OCaml 5.5's `dynlink` calls a primitive that js_of_ocaml 6.4.1's runtime chunk does not provide. It
+appears in the build as one extra line in the missing-primitives warning, and only under 5.5:
+
+```
+Missing primitives provided by +dynlink.js:
+  caml_dynlink_close_lib
+  caml_dynlink_lookup_symbol
+  caml_dynlink_open_lib
+  caml_dynlink_parse_ld_conf     <- new in 5.5, and the only one that gets called
+```
+
+Both programs use Dynlink — the driver pulls it in through compiler-libs, and the interpreter is
+built `--dynlink` — so "inside the constraint" was not the same as working. Waiting for a
+js_of_ocaml that provides the primitive is the clean answer; a runtime stub for it is possible (that
+is what js_of_ocaml's primitive model invites) but has not been tried.
+
+For reference, 5.5 grows the stdlib too: 75 files / 5.94 MB against 5.2's 71 / 4.86 MB.
 
 **Rebuild, then verify.** Note that a container keeps running the image it was created from, so after
 rebuilding use `docker run --rm` (as below, and as `make compiler` / `make worker` do) or recreate

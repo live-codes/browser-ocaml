@@ -79,5 +79,22 @@ echo "    $(ls "$out/stdlib" | wc -l) files"
 echo "==> The worker harness"
 cp packages/ocaml/src/compiler/worker.js "$out/worker.js"
 
+echo "==> The js_of_ocaml runtime chunks"
+# The compiler resolves these through Fs while it emits a program. Outside a
+# browser that works, because the files are on disk next to the compiler; inside
+# one there is no filesystem to resolve them in, and the emitted program is then
+# quietly missing pieces of its own runtime -- quietly, because a chunk that
+# provides classes or helpers rather than primitives leaves no dummy behind.
+mkdir -p "$out/runtime"
+cp "$(opam var lib)/js_of_ocaml-compiler"/*.js "$out/runtime/" 2>/dev/null || true
+(cd "$out/runtime" && ls | grep -v '^manifest.txt$' > manifest.txt)
+echo "    $(ls "$out/runtime" | wc -l) files"
+
+# The artifacts are classic scripts that use `require` and set globals, so the
+# directory has to say it is not a module: this package is "type": "module", and
+# without this marker Node treats a `.js` file under it as ESM and the compilers
+# fail to load outside a browser.
+printf '{\n  "type": "commonjs"\n}\n' > "$out/package.json"
+
 echo "==> Done"
 du -sh "$out"

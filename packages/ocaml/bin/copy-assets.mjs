@@ -63,9 +63,13 @@ for (const implementation of which) {
 }
 
 console.log('');
-console.log('Serve those directories and pass the URL as baseUrl:');
+console.log(`Serve ${which.length === 1 ? 'that directory' : 'those directories'} and pass the URL as baseUrl,`);
+console.log('for example:');
 for (const implementation of which) {
 	console.log(
-		`  ${implementation}: new URL('${which.length === 1 ? '/' : `/${implementation}/`}', location.href)`
+		`  ${implementation}: ` +
+			"new URL('" +
+			(which.length === 1 ? '/ocaml/' : `/${implementation}/`) +
+			"', location.href)"
 	);
 }

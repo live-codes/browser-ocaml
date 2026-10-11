@@ -1,7 +1,7 @@
 # Toolchain image for building the in-browser OCaml toplevel.
 #
-# This is build-time only: it produces a static web/worker.js. The PoC itself
-# runs entirely in the browser and never needs a server (or this image).
+# This is build-time only: it produces static artifacts, and the browser then
+# does all the work -- nothing a page runs needs a server, or this image.
 
 FROM ocaml/opam:debian-12-ocaml-5.2
 

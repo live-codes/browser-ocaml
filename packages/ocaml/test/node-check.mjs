@@ -52,12 +52,15 @@ const cases = {
   },
   library: { code: 'let () = print_endline (Greet.hello "node")' },
   compileError: { code: 'let x : int = "nope"' },
-  warning: { code: 'let f x = 1' },
-  badAssets: { code: 'let () = print_endline "unreachable"', _breakReader: true }
+  warning: { code: 'let f x = 1' }
 };
 
-for (const [name, { _breakReader, ...payload }] of Object.entries(cases)) {
-  if (_breakReader) runtime.setReader(() => null);
+// There is deliberately no "missing asset" case. The obvious one -- break the
+// reader, then run something that needs an interface -- proves nothing, because
+// the environment caches what it has already loaded: the first few cases above
+// have already pulled in Stdlib, so a later one never asks for it again. The
+// earlier version of this file made that mistake.
+for (const [name, payload] of Object.entries(cases)) {
   const result = runtime.run(payload);
   const failed = result.exitCode === null;
   console.log(
@@ -66,14 +69,4 @@ for (const [name, { _breakReader, ...payload }] of Object.entries(cases)) {
       (result.error ? ` error=${JSON.stringify(result.error)}` : '') +
       (failed ? ` diagnostics=${JSON.stringify(result.diagnostics)}` : '')
   );
-  if (_breakReader) {
-    // Put the real reader back so the summary is not misleading.
-    runtime.setReader((url) => {
-      try {
-        return readFileSync(fileURLToPath(url));
-      } catch {
-        return null;
-      }
-    });
-  }
 }

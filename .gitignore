@@ -5,6 +5,7 @@ _build/
 # web/stdlib/
 # web/libs/
 # packages/ocaml/assets/
-# ocaml-wasm-libs/
+# A scratch directory the interpreter writes fetched libraries into at run time.
+ocaml-wasm-libs/
 .opam/
 *.install

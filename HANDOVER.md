@@ -3,6 +3,11 @@
 For a fresh session picking this up. Read `FINDINGS.md` alongside this: it has the technical
 detail and the evidence; this file is what to *do* and what not to repeat.
 
+**Status: the OCaml side is done and the package is ready to publish.** Both implementations are
+packaged behind separate entry points, licensed, built reproducibly, and verified — the compiler in
+a browser, the interpreter in a browser and under node. The one remaining step is the LiveCodes
+integration described below, which is deliberately not started.
+
 ---
 
 ## 1. State of play in one paragraph
@@ -29,8 +34,8 @@ LiveCodes yet.
 | `tools/emit_probe/jsoo_in_js.sh` | builds `js_of_ocaml` as bytecode → JS, incl. the findlib opt-out |
 | `tools/emit_probe/ocamlc_in_js.sh` | compiles `ocamlc.byte` to JS |
 | `tools/emit_probe/run.sh`, `target_env.sh`, `emit_probe.ml`, `dune` | earlier probes; `emit_probe.ml` proves bytecode→JS works from *inside* a js_of_ocaml program |
-| `src/worker.ml` | the **superseded** interpreter (works in node; wrong model for LiveCodes) |
-| `packages/ocaml/` | npm package `@live-codes/ocaml` (interpreter-shaped; README stale) |
+| `src/worker.ml` | the **interpreter** (an OCaml toplevel; works in node and in a browser) |
+| `packages/ocaml/` | npm package `@live-codes/ocaml`: both implementations, and its README is current |
 | `docker/build.sh` | builds the interpreter and stages package assets |
 | `D:\DevWork\live-codes\livecodes` | LiveCodes, read-only reference |
 
@@ -129,7 +134,7 @@ Two browser-only rules the harness depends on, both in FINDINGS §3.2: **never c
 windows-1252 in browsers and corrupts binary files — convert byte by byte.
 
 One tuning item worth doing while here: the driver uses OCaml's default warning set, so an unused
-variable passes silently. The superseded interpreter enabled `+a`; the driver should probably do
+variable passes silently. The interpreter's toplevel enables `+a`; the driver should probably do
 the same. `tools/compile-stdout/test-entry.mjs` has a `warning` case ready to show it.
 
 ### Step 5 — LiveCodes language entry
@@ -181,11 +186,13 @@ by changing the old entry's `title` (no new API needed). The eventual swap is **
 | --- | --- | --- |
 | Toolchain end to end | `pipeline.sh` then the three node commands (§3 Step 1) | `probe ok` |
 | argv injection | `node inject_argv.cjs` | `work/out.js` = 28,554 bytes, runs |
-| Interpreter (superseded) | `node packages/ocaml/test/node-check.mjs` | all cases correct |
+| Interpreter | `node packages/ocaml/test/node-check.mjs` | all cases correct |
 | Emitted bundle is self-contained | `node out.js` from a clean directory | prints the program's output |
 
-Note: `node-check.mjs`'s `badAssets` case is a **false test** — the environment caches loaded
-interfaces so a missing asset is never exercised. Do not treat it as evidence.
+Note: `node-check.mjs` has no "missing asset" case, deliberately. The obvious one — break the
+reader, then run something that needs an interface — proves nothing, because the environment caches
+loaded interfaces, so a later case never asks for one it has already seen. That case used to exist
+and was misleading; it is gone.
 
 ---
 

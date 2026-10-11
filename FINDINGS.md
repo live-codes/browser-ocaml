@@ -40,7 +40,7 @@ Repos involved:
 | bytecode → JavaScript, **as JavaScript** (`jsoo.js`) | ran under node, produced runnable `out.js` |
 | The emitted JS runs and is correct | `node out.js` → `probe ok`; and `sum=30 squares=0,1,4,9,16` for a program using `List`/`Printf`/`String` |
 | argv can be injected from JS with no patch | injected `process.argv`, compiler produced a correct 28,554-byte bundle |
-| The interpreter (superseded) works in node | `packages/ocaml/test/node-check.mjs`: plain, stdin, argv, files, library, compileError, warning all correct |
+| The interpreter works in node | `packages/ocaml/test/node-check.mjs`: plain, stdin, argv, files, library, compileError, warning all correct |
 | js_of_ocaml can be compiled to JS and emit complete bundles | 5,228,872-byte `jsoo.js`; output identical in size to the native CLI's |
 
 ### Does not work / not done
@@ -53,8 +53,7 @@ Repos involved:
 | Starter template for real OCaml | not started (the existing one is ReScript-flavoured OCaml importing React — it will not compile) |
 | Browser verification of the interpreter | never achieved; the browser harness was unreliable (tab reverted to `about:blank`) |
 | Automated tests for the runtime | none; the test pages are manual |
-| `packages/ocaml/README.md` | stale — documents the pre-`error` API and says "browser only" |
-| Package license | deliberately unset; needed before publishing to npm |
+| Package license | decided: LGPL-2.1-or-later WITH OCaml-LGPL-linking-exception |
 
 ---
 
@@ -583,13 +582,15 @@ the 1.9 MB + 5.0 MB artifacts cached by the browser/CDN.
 
 ---
 
-## 4. Superseded: the interpreter
+## 4. The interpreter, and why it is not the default
 
-Before the compile-to-JS correction, the project built an **OCaml toplevel** (the
-`compiler-libs` frontend plus a bytecode interpreter) compiled to JS with js_of_ocaml. It works
-in node and its code is in `src/worker.ml`, but it is the *wrong model* for LiveCodes (no
-generated JS, no Compiled Code pane, no DOM interop). Kept here because it works and the
-learnings are reusable.
+The package ships **both** implementations, because they do different jobs: the compiler is for
+programs that should touch the page, the interpreter is for programs that should behave like a
+script. This is the interpreter.
+
+It is an **OCaml toplevel** — the `compiler-libs` frontend plus a bytecode interpreter, compiled to
+JS with js_of_ocaml, running in a worker. Its code is `src/worker.ml`. It works, and what follows is
+what it buys and what it costs.
 
 ### 4.1 What it does (verified in node via `packages/ocaml/test/node-check.mjs`)
 
@@ -605,8 +606,9 @@ learnings are reusable.
 
 Run it with: `node packages/ocaml/test/node-check.mjs`.
 
-`badAssets` in that file is a **false test** — the environment caches loaded interfaces, so a
-missing asset is never exercised after the first run. It does not test what it claims.
+`node-check.mjs` has no "missing asset" case, deliberately: the environment caches loaded
+interfaces, so a later case never asks for one it has already seen, and a test built on breaking the
+reader proves nothing. The earlier version had one and it was misleading; it is gone.
 
 ### 4.2 Implementation gotchas, all learned the hard way
 
@@ -774,12 +776,15 @@ No mechanism exists. Two options:
 
 | Path | What |
 | --- | --- |
-| `src/index.js`, `src/api.js` | `createCompiler({ baseUrl, args, files })` → `{ run, dispose, banner }` |
-| `bin/copy-assets.mjs` | `ocaml-copy-assets [dir]` — copies `assets/` for serving |
-| `assets/` | ~4.4 MB: interpreter runtime + `stdlib/` + `libs/` (staged by `docker/build.sh`) |
-| `test/` | `browser.html`, `host-worker.js`, `in-worker.html`, `node-check.mjs` |
-| `README.md` | **stale** — documents the pre-`error` API, says "browser only" |
-| `THIRD-PARTY-NOTICES.md` | js_of_ocaml + compiler-libs are LGPL-2.1-or-later with the OCaml linking exception |
+| `src/index.js` | the compiler: `createCompiler({ baseUrl })` → `{ banner, compile }` |
+| `src/compiler/` | that API, its orchestration, and the worker harness |
+| `src/interpreter/` | the toplevel's API: `createCompiler({ baseUrl, args, files })` → `{ run, dispose, banner }` |
+| `bin/copy-assets.mjs` | `ocaml-copy-assets [dir] [--compiler\|--interpreter\|--all]` |
+| `assets/compiler/` | the two compiler programs, the stdlib and the runtime chunks (~9.3 MB) |
+| `assets/interpreter/` | the toplevel, its interfaces and its libraries (~4.4 MB) |
+| `test/` | `compiler.html`, `interpreter.html`, `interpreter-in-worker.html`, `node-check.mjs` |
+| `LICENSE` | LGPL-2.1-or-later WITH OCaml-LGPL-linking-exception |
+| `THIRD-PARTY-NOTICES.md` | what is whose inside the generated bundles |
 
 Runtime API surface (interpreter): `self.ocamlWasm.init()`, `.run({code, input, args, files})`,
 `.setReader(fn)`, `.setBaseUrl(url)`. `run` **never throws** — failures come back as `error`

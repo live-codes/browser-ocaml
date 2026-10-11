@@ -57,4 +57,6 @@ cp web/worker-entry.js packages/ocaml/assets/interpreter/
 rm -rf packages/ocaml/assets/interpreter/stdlib packages/ocaml/assets/interpreter/libs
 cp -r web/stdlib packages/ocaml/assets/interpreter/
 cp -r web/libs packages/ocaml/assets/interpreter/
+# Same reason as the compiler's: these are classic scripts, not modules.
+printf '{\n  "type": "commonjs"\n}\n' > packages/ocaml/assets/interpreter/package.json
 du -sh packages/ocaml/assets/interpreter

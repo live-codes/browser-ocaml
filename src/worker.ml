@@ -1,6 +1,6 @@
 (* The OCaml toplevel, running inside a Web Worker.
 
-   This is the browser end of the PoC. It is the same core as the official
+   This is the browser end of the interpreter. It is the same core as the official
    OCaml playground (ocaml.org/play): compiler-libs' toplevel, driven through
    [Js_of_ocaml_toplevel.JsooTop].
 

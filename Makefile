@@ -1,26 +1,32 @@
-# Build the in-browser OCaml toplevel PoC.
+# Build and run the in-browser OCaml work: the compiler, the interpreter, and the
+# interpreter's own demo page. Requires Docker; nothing is installed on the host.
 #
-# Requires Docker. Nothing is installed on the host.
+# These wrap the same scripts the long-lived `ocaml-toolchain` container runs, for
+# when there is no container to exec into. See README.md.
 
 IMAGE = browser-ocaml-toolchain
 
-.PHONY: all toolchain worker serve clean
+.PHONY: all toolchain compiler worker serve clean
 
-all: worker
+all: compiler worker
 
 ## Build the toolchain image (opam + js_of_ocaml). Only needed once.
 toolchain:
 	docker build -t $(IMAGE) docker
 
-## Compile src/worker.ml -> web/worker.js
+## Build the compiler: OCaml source -> JavaScript, into packages/ocaml/assets/compiler/
+compiler: toolchain
+	docker run --rm -v "$(CURDIR):/home/opam/src" -w /home/opam/src $(IMAGE) sh docker/build-compiler.sh
+
+## Build the interpreter: src/worker.ml -> web/worker.js, and its package assets
 worker: toolchain
 	docker run --rm -v "$(CURDIR):/home/opam/src" -w /home/opam/src $(IMAGE) sh docker/build.sh
 
-## Serve the PoC locally. This only serves static files; no compute happens
-## server-side. A server is required because Web Workers are not allowed on
-## file:// origins.
+## Serve the demo and the test pages locally. Static files only; no compute
+## happens server-side. A server is required because Web Workers are not allowed
+## on file:// origins.
 serve:
-	python -m http.server 8080 --directory web
+	python -m http.server 8080
 
 clean:
 	rm -rf _build web/worker.js web/stdlib web/libs export.txt

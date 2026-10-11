@@ -286,22 +286,41 @@ filesystem. So **this path requires `--target-env=browser`**, or any build that 
 device. Note that this is also why a tiny `MlFakeDevice` is mounted by `fs.js` itself
 (`jsoo_mount_point.push({ path: name, device: new MlFakeDevice(name, f) })`).
 
-**Open gap: reading the output back.** There is **no JS-side read hook** (no `jsoo_read_file`
-or equivalent). The compiler writes `out.js` *into* its filesystem, and JavaScript has no
-supported way to read it back out. Two options, and one must be chosen before the adapter is
-built:
+**Output: `-o -` writes to stdout — solved for js_of_ocaml.** `cmd_arg.ml:342` maps the value
+`"-"` to `` `Stdout``, and `compile.ml:272` handles that path. Verified:
 
-1. ~~Have the compiler write to stdout and capture that.~~ **Tested, not available:**
-   `node jsoo.js t.byte` with no `-o` prints **nothing** — the CLI requires `-o`.
-2. **Add a small hook or patch** — the realistic option. `jsoo_mount_point` is a global array of
-   `{ path, device }` and the fake device holds file contents, so a JS-side read is *possible*
-   but unsupported. Emitting the result to stdout after writing it, or exposing a read hook,
-   would settle it. This must become a **vendored patch** rather than the `sed` used for the
-   findlib opt-out.
+```sh
+node jsoo.js t.byte -o - > out.js     # out.js: 28,554 bytes, byte-identical, runs
+```
 
-Do not expect to avoid this. It is the one place where the compilers' command-line shape
-genuinely does not fit a browser: everything on the input side works (`jsoo_fs_tmp`, argv),
-but the output has nowhere to go.
+An earlier conclusion in this file said stdout was not available. That was drawn from running
+**without `-o` at all**, which prints nothing and is a different thing. Corrected.
+
+**ocamlc has no stdout option.** `node ocamlc.js t.ml -o -` produces **0 bytes** on stdout and
+creates no `-` file, so the source→bytecode half must write a real file. That file then lives in
+the compiler's filesystem, and there is no JS-side read hook (no `jsoo_read_file`). So exactly
+one read-back remains — of the *intermediate bytecode*, not of the final JavaScript.
+
+Three ways to close it, best first:
+
+1. **Make both compilers share one filesystem**, so the bytecode never has to leave it.
+2. **Read the fake device.** `MlFakeDevice.register` (`fs_fake.js:355`) stores contents in
+   `this.content[name]` — a plain object — so a JS-side read is possible if the device is
+   reachable. Unsupported, and it depends on the build's minification and reachability.
+3. **A small vendored patch** to ocamlc to emit the bytecode to stdout.
+
+**Unconfirmed, and it matters: the `jsoo_fs_tmp` machinery must be *emitted*.** It exists in
+`runtime/js/fs.js`, but it did **not** appear in a default `js_of_ocaml` build of `ocamlc.byte`
+(grepped the output for `jsoo_fs_tmp`: 0 occurrences). `compile.ml:269` gates it on
+`let init_pseudo_fs = fs_external && standalone`, and **`standalone` is not a CLI flag** — it
+appears only inside `compile.ml`, so it is derived internally. `--standalone` is rejected both
+top-level and under `compile`. The way to get external registration emitted is therefore still
+unknown. `--file=FILE` is the path that definitely emits `jsoo_create_file_extern` calls.
+
+This matters because the **source is per-run** and cannot be embedded at build time. If external
+registration cannot be emitted, the adapter needs a wrapper or a patch after all. **Resolve this
+before building anything else** — it is now the first open question, ahead of the bytecode
+read-back.
 
 **Unverified:** the browser (`fs_fake`) path itself. Node exercises `fs_node.js`. The same code
 path is intended, but this difference is exactly where an earlier bug hid, so it must be

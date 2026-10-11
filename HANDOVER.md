@@ -75,10 +75,15 @@ require('./jsoo-browser.js');
 * `globalThis.jsoo_fs_tmp` queues files, which the program drains at `caml_fs_init` (§3.2).
 * Registration needs the **fake** device — `MlNodeDevice` has no `register`, so
   `caml_create_file` raises `cannot register file` — hence `--target-env=browser`.
-* **Settle the output side first** (FINDINGS §3.2, "Open gap"): there is no JS-side read hook,
-  and `-o` is required (omitting it prints nothing), so the result has nowhere to go. The
-  realistic fix is a small **vendored patch** to emit the result or expose a read hook — not
-  the `sed` used for findlib.
+* **Output:** js_of_ocaml writes to stdout with `-o -` — **verified**, and *not* the same as
+  omitting `-o`, which prints nothing. `ocamlc -o -` does **not** work, so the intermediate
+  bytecode still has to be read back. That is the one remaining gap; options are in FINDINGS
+  §3.2.
+* **Resolve the registration emission first — it is the blocking unknown.** The `jsoo_fs_tmp`
+  machinery exists in the runtime but was **not** emitted in a default build of `ocamlc.byte`
+  (0 occurrences). `compile.ml` gates it on `fs_external && standalone`, and `standalone` is
+  **not a CLI flag** — `--standalone` is rejected everywhere. Without it, per-run source cannot
+  be injected, so the adapter needs a wrapper or a patch. See FINDINGS §3.2.
 * Then confirm in a real browser page.
 
 ### Step 3 — Trim and ship the stdlib

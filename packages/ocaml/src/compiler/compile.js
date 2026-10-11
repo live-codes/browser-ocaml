@@ -38,9 +38,31 @@ function hexToBytes(hex) {
 	return bytes;
 }
 
-function runInWorker(baseUrl, script, files, env, argv, fs = []) {
+// A worker script has to be same-origin with whatever creates it: `new Worker()`
+// refuses a cross-origin URL, and CORS does not help -- it is the script fetch the
+// browser will not make. A data URL carries its own source, so there is nothing to
+// fetch and nothing to refuse, which is what lets the compiler run from a CDN.
+//
+// Everything the harness then loads is passed to it as an absolute URL, and
+// `importScripts` *does* accept cross-origin scripts, which `new Worker` does not.
+//
+// A data URL rather than a blob because the compiler may itself be running inside a
+// worker, where `URL.createObjectURL` is not dependable.
+const harnessUrls = new Map();
+
+async function harnessFor(baseUrl) {
+	let url = harnessUrls.get(String(baseUrl));
+	if (!url) {
+		const source = await (await fetch(new URL('worker.js', baseUrl))).text();
+		url = 'data:text/javascript;charset=utf-8,' + encodeURIComponent(source);
+		harnessUrls.set(String(baseUrl), url);
+	}
+	return url;
+}
+
+async function runInWorker(baseUrl, script, files, env, argv, fs = []) {
+	const worker = new Worker(await harnessFor(baseUrl));
 	return new Promise((resolve, reject) => {
-		const worker = new Worker(new URL('worker.js', baseUrl));
 		worker.onmessage = (event) => {
 			worker.terminate();
 			resolve(event.data);

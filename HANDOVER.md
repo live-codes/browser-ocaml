@@ -130,6 +130,19 @@ only exist in a page — and that is where the two real harness bugs were found.
 * **Stopping the `npm run serve` task can leave the server holding the port.** npm runs the script as
   a child process, and the child outlives the wrapper. Check the port and stop the process that owns
   it rather than assuming the task kill released it, or the next `npm run serve` fails to bind.
+* **A worker script has to be same-origin with whatever creates it.** `new Worker()` refuses a
+  cross-origin URL, and CORS does not help — it is the script fetch the browser will not make. That is
+  why the compiler builds its harness worker from a **data URL**, which carries its own source and so
+  has nothing to fetch: it works from a CDN, and unlike `URL.createObjectURL` it is dependable when
+  the compiler is itself running inside a worker. Everything the harness then loads is passed as an
+  absolute URL — `importScripts` *does* accept cross-origin scripts, which `new Worker` does not.
+  LiveCodes meets the same rule and answers it the same way: its sandbox iframe's wasm languages
+  create a same-origin worker that then `importScripts` the CDN.
+  Verified cross-origin (page on one port, assets on another): the program compiled and ran.
+* **Running cross-origin adds one stray diagnostic**: `importScripts` reported failing to load
+  `jsoo.js`, yet the compile succeeded and the output ran, so it is non-fatal and unexplained. It
+  appears with both the data-URL and blob-URL worker forms, and *not* same-origin, so it is about the
+  cross-origin fetch rather than the worker. Worth chasing before diagnostics are surfaced to users.
 * **Watch for the failure you cannot see.** A filtered build log hid a failed step, and a
   "byte-identical, so it works" claim turned out to describe a script that had aborted. Print exit
   codes, read the tail of the output, and re-run rather than infer.

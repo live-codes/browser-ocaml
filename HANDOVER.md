@@ -60,7 +60,7 @@ path is a CDN.
 | Compiler, outside a browser | `node tools/compile-stdout/emit-check.mjs` | `dummy primitives: (none)` and the program prints |
 | Stdlib artifact, byte for byte | `node tools/compile-stdout/verify-fs.mjs`, against `sha256sum` in the container (see its header) | no differences |
 | Interpreter, outside a browser | `node packages/ocaml/test/node-check.mjs` | seven cases correct |
-| Both, in a browser | serve the repo root, open `packages/ocaml/test/{compiler,interpreter,interpreter-in-worker}.html` | each reports its cases |
+| Both, in a browser | `npm run serve`, then open `packages/ocaml/test/{compiler,interpreter,interpreter-in-worker}.html` | each reports its cases |
 | The published artifact | `npm pack`, install into a fresh project, import all three entry points | they resolve, and the interpreter runs from the copied assets |
 
 The browser pages matter. `emit-check` and `node-check` reproduce the browser's conditions by

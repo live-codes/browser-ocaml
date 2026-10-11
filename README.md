@@ -84,7 +84,7 @@ The `Makefile` wraps the same steps with `docker run`, for when there is no long
 Serve the repository root, then open the pages. Every test runs against the built assets.
 
 ```sh
-python -m http.server 8080      # from the repository root
+npm run serve                   # from the repository root; no Docker needed
 ```
 
 | | |

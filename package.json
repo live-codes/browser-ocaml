@@ -1,0 +1,11 @@
+{
+  "name": "browser-ocaml",
+  "private": true,
+  "description": "Tools for running OCaml in a browser, and the @live-codes/ocaml package they ship as",
+  "scripts": {
+    "serve": "node tools/compile-stdout/capture-server.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

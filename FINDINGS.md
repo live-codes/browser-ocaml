@@ -259,7 +259,7 @@ docker run --rm -v "$PWD:/home/opam/src" -w /home/opam/src ocaml-toolchain sh do
 node tools/compile-stdout/emit-check.mjs     # no "dummy primitives", and the program prints
 node packages/ocaml/test/node-check.mjs      # interpreter: 7 cases, in node
 node tools/compile-stdout/verify-fs.mjs      # stdlib artifact is byte-exact (see its header)
-python -m http.server 8080                   # then, in a browser:
+npm run serve                                # then, in a browser:
 #   packages/ocaml/test/compiler.html         the compiler, end to end
 #   packages/ocaml/test/interpreter.html
 #   packages/ocaml/test/interpreter-in-worker.html

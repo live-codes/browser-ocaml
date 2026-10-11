@@ -162,4 +162,5 @@ version bump cannot silently patch the wrong thing.
 - `test/interpreter-in-worker.html` — the runtime inside a worker the host already owns
 - `test/node-check.mjs` — the interpreter outside a browser: `node test/node-check.mjs`
 
-Serve the repository root and open the pages; they load the assets from this package.
+Serve the repository root and open the pages; they load the assets from this package. From the
+repository root, `npm run serve` starts a static server on port 8080.

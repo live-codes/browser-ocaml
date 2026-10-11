@@ -23,11 +23,11 @@ compiler: toolchain
 worker: toolchain
 	docker run --rm -v "$(CURDIR):/home/opam/src" -w /home/opam/src $(IMAGE) sh docker/build.sh
 
-## Serve the demo and the test pages locally. Static files only; no compute
-## happens server-side. A server is required because Web Workers are not allowed
-## on file:// origins.
+## Serve the demo and the test pages locally — the same thing as `npm run serve`,
+## with no Docker involved. Static files only; no compute happens server-side. A
+## server is required because Web Workers are not allowed on file:// origins.
 serve:
-	python -m http.server 8080
+	npm run serve
 
 clean:
 	rm -rf _build web/worker.js web/stdlib web/libs export.txt

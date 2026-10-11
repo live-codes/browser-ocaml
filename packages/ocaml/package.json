@@ -2,6 +2,13 @@
   "name": "@live-codes/ocaml",
   "version": "0.1.0",
   "description": "Run OCaml in the browser with no server: a compiler that emits JavaScript, and a toplevel that runs OCaml directly",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/live-codes/browser-ocaml.git",
+    "directory": "packages/ocaml"
+  },
+  "homepage": "https://github.com/live-codes/browser-ocaml#readme",
+  "bugs": "https://github.com/live-codes/browser-ocaml/issues",
   "type": "module",
   "license": "LGPL-2.1-or-later WITH OCaml-LGPL-linking-exception",
   "exports": {

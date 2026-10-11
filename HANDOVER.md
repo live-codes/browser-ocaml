@@ -79,11 +79,11 @@ require('./jsoo-browser.js');
   omitting `-o`, which prints nothing. `ocamlc -o -` does **not** work, so the intermediate
   bytecode still has to be read back. That is the one remaining gap; options are in FINDINGS
   §3.2.
-* **Resolve the registration emission first — it is the blocking unknown.** The `jsoo_fs_tmp`
-  machinery exists in the runtime but was **not** emitted in a default build of `ocamlc.byte`
-  (0 occurrences). `compile.ml` gates it on `fs_external && standalone`, and `standalone` is
-  **not a CLI flag** — `--standalone` is rejected everywhere. Without it, per-run source cannot
-  be injected, so the adapter needs a wrapper or a patch. See FINDINGS §3.2.
+* **Registration is emitted by default — confirmed.** `globalThis.jsoo_fs_tmp`, `caml_fs_init`
+  and `globalThis.jsoo_env` are all present in a default build. (An earlier note here said the
+  machinery was missing; that was a **bad grep** — the global is reached through a minified
+  alias, so search for `jsoo_fs_tmp`, not `globalThis.jsoo_*`.)
+* **The one real gap is the ocamlc output read-back** — options in FINDINGS §3.2.
 * Then confirm in a real browser page.
 
 ### Step 3 — Trim and ship the stdlib

@@ -311,18 +311,51 @@ Three ways to close it, best first:
    reachable. Unsupported, and it depends on the build's minification and reachability.
 3. **A small vendored patch** to ocamlc to emit the bytecode to stdout.
 
-**Unconfirmed, and it matters: the `jsoo_fs_tmp` machinery must be *emitted*.** It exists in
-`runtime/js/fs.js`, but it did **not** appear in a default `js_of_ocaml` build of `ocamlc.byte`
-(grepped the output for `jsoo_fs_tmp`: 0 occurrences). `compile.ml:269` gates it on
-`let init_pseudo_fs = fs_external && standalone`, and **`standalone` is not a CLI flag** — it
-appears only inside `compile.ml`, so it is derived internally. `--standalone` is rejected both
-top-level and under `compile`. The way to get external registration emitted is therefore still
-unknown. `--file=FILE` is the path that definitely emits `jsoo_create_file_extern` calls.
+**Confirmed: the machinery IS emitted in a default build.** An earlier version of this file
+claimed otherwise. That was a **bad grep** — the generated code reaches the global object through
+a minified alias, so searching for `globalThis.jsoo_*` finds nothing. Search for the property
+name `jsoo_fs_tmp` instead. What a default `ocamlc.byte` build actually contains (minified):
 
-This matters because the **source is per-run** and cannot be embedded at build time. If external
-registration cannot be emitted, the adapter needs a wrapper or a patch after all. **Resolve this
-before building anything else** — it is now the first open question, ahead of the bytecode
-read-back.
+```js
+function buF() {                          // caml_fs_init
+  var b = aV.jsoo_fs_tmp;                 // aV is the global object
+  if (b) for (var a = 0; a < b.length; a++) auT(b[a].name, b[a].content);
+  aV.jsoo_create_file = auT; aV.jsoo_fs_tmp = []; return 0
+}
+function but(a, b) {                      // caml_create_file
+  var c = ny(a);
+  if (!c.device.register) bc("cannot register file");
+  c.device.register(c.rest, b); return 0
+}
+```
+
+`compile.ml` hard-codes the choice per input kind: `~standalone:true` for the
+bytecode-executable path (line 447) and `~standalone:false` for the `.cmo`/`.cma` partial paths
+(487, 521, 559, 609). So `init_pseudo_fs = fs_external && standalone` is true for a `.byte`
+input — our case. There is **no** `--standalone` flag; it is not a CLI option at all.
+
+**Also exposed: `globalThis.jsoo_env`.** `sys.js` reads it for the environment:
+
+```js
+if (globalThis.jsoo_env && typeof globalThis.jsoo_env[n] === "string") return globalThis.jsoo_env[n];
+```
+
+So the page can supply `OCAMLLIB` and anything else the compiler reads from the environment,
+without argv plumbing.
+
+**The adapter's mechanisms, and their status:**
+
+| Need | Mechanism | Status |
+| --- | --- | --- |
+| argv | `globalThis.process.argv` | **verified** |
+| files in | `globalThis.jsoo_fs_tmp` | **confirmed emitted**, no patch |
+| environment | `globalThis.jsoo_env` | present in a default build |
+| output, js_of_ocaml | `-o -` → stdout | **verified**, 28,554 bytes, runs |
+| output, ocamlc | — | **the remaining gap** |
+
+**There is no reader.** The only jsoo globals a program exposes are `jsoo_create_file`,
+`jsoo_env` and `jsoo_fs_tmp` — all write-side. That is precisely what leaves the bytecode
+read-back open, and why the three options above are the whole list.
 
 **Unverified:** the browser (`fs_fake`) path itself. Node exercises `fs_node.js`. The same code
 path is intended, but this difference is exactly where an earlier bug hid, so it must be

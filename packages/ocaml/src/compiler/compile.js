@@ -53,6 +53,34 @@ function runInWorker(baseUrl, script, files, env, argv) {
 	});
 }
 
+// The compiler finds parts of its own runtime through a filesystem -- `Fs` --
+// while it emits a program. Outside a browser those files are on disk beside it;
+// inside one there is no filesystem, and the program it emits is then missing
+// pieces of its own runtime, silently: a chunk that provides classes or helpers
+// rather than primitives leaves no dummy behind. So they are shipped and
+// registered, under both the plain and the `+`-prefixed name the compiler may
+// ask for. Loaded once per page, not once per compile.
+let runtimeChunks;
+
+async function loadRuntime(baseUrl) {
+	if (runtimeChunks) return runtimeChunks;
+	const manifest = await (await fetch(new URL('runtime/manifest.txt', baseUrl))).text();
+	runtimeChunks = (
+		await Promise.all(
+			lines(manifest).map(async (name) => {
+				const content = bytesToString(
+					new Uint8Array(await (await fetch(new URL(`runtime/${name}`, baseUrl))).arrayBuffer())
+				);
+				return [
+					{ name, content },
+					{ name: `+${name}`, content }
+				];
+			})
+		)
+	).flat();
+	return runtimeChunks;
+}
+
 // The stdlib ships as plain files plus a manifest listing them, so the page can
 // fetch the set without needing a directory listing. 71 files, about 1.8 MB.
 export async function loadStdlib(baseUrl) {
@@ -80,7 +108,8 @@ export async function loadStdlib(baseUrl) {
  */
 export async function compile(source, { baseUrl, driver = 'compile_stdout.browser.js', jsoo = 'jsoo.js', stdlib }) {
 	if (typeof source !== 'string') throw new TypeError('compile: source must be a string');
-	const files = [{ name: 'main.ml', content: source }, ...stdlib];
+	const runtimeFiles = await loadRuntime(baseUrl);
+	const files = [{ name: 'main.ml', content: source }, ...stdlib, ...runtimeFiles];
 
 	// Source -> bytecode, as hex.
 	const front = await runInWorker(
@@ -90,27 +119,46 @@ export async function compile(source, { baseUrl, driver = 'compile_stdout.browse
 		{ OCAMLLIB: 'stdlib' },
 		['node', 'compile_stdout', 'main.ml']
 	);
-	const diagnostics = diagnosticsOf(front.err);
-	const hex = front.out.trim();
+	const diagnostics = diagnosticsOf(front.err.join('\n'));
+	// The driver prints its hex with no newlines anywhere, so its chunks are
+	// pieces of one line and go back together without separators.
+	const hex = front.out.join('').trim();
 	if (!/^[0-9a-f]+$/.test(hex)) {
 		return { js: null, diagnostics, error: 'compilation failed' };
 	}
 
 	// Bytecode -> JavaScript, on stdout.
 	//
-	// `--target-env=browser` because that is where the result runs: it selects
-	// the browser filesystem, and the node one is not merely unused, it decides
-	// how the program ends -- the program's own final exit is a stub in a
-	// browser build rather than something that flushes stdout first.
+	// `--target-env=browser` because that is where the result runs.
+	//
+	// `--pretty` is for the reader -- the emitted JavaScript is what a Compiled
+	// Code pane shows -- and it also keeps the output line-oriented, which the
+	// joining below depends on.
 	const back = await runInWorker(
 		baseUrl,
 		new URL(jsoo, baseUrl).href,
-		[{ name: 'main.byte', content: bytesToString(hexToBytes(hex)) }],
+		[{ name: 'main.byte', content: bytesToString(hexToBytes(hex)) }, ...runtimeFiles],
 		{},
-		['node', 'js_of_ocaml', 'main.byte', '-o', '-', '--target-env=browser']
+		['node', 'js_of_ocaml', 'main.byte', '-o', '-', '--target-env=browser', '--pretty']
 	);
-	const backDiagnostics = diagnosticsOf(back.err);
-	const js = back.out;
+	const backDiagnostics = diagnosticsOf(back.err.join('\n'));
+	// js_of_ocaml's stdout is line-buffered, so it hands over one console call
+	// per line: the chunks have to be rejoined with newlines, not concatenated.
+	// Concatenated, the whole program lands on a single line and ends up inside
+	// the header comment it begins with -- it then runs nothing, prints nothing
+	// and raises nothing. That is a miserable failure to debug: 64 KB of
+	// plausible-looking, commented-out code.
+	const js = back.out.join('\n');
+	// A bundle that arrives as one line would be swallowed by the header comment
+	// it starts with, and would then run nothing at all. Fail loudly rather than
+	// hand back a program that quietly does nothing.
+	if (!js.includes('\n')) {
+		return {
+			js: null,
+			diagnostics: [...diagnostics, ...backDiagnostics],
+			error: 'the compiler produced a single-line bundle, which would not run'
+		};
+	}
 	if (js.trim() === '') {
 		return {
 			js: null,

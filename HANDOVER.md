@@ -90,13 +90,12 @@ require('./jsoo-browser.js');
 * **`fs_fake` is verified.** The driver rebuilt for the browser target, with all 72 files
   registered and nothing on disk, produces bytecode that goes through `jsoo.js -o -` to
   JavaScript that runs. See FINDINGS §3.2.
-* **Remaining on the OCaml side:** one real blocker, then packaging. The blocker is that a compiled
-  program **produces no output in a browser** — it runs, but nothing it prints arrives. Node is
-  unaffected. See FINDINGS §3.2 for the evidence and the two things to try first. **The package must
-  not be published until that is fixed.** Everything else in the package is in place: both
-  implementations behind separate entry points, an LGPL-2.1-or-later WITH
-  OCaml-LGPL-linking-exception license, a reproducible guarded build, and metadata set for a public
-  scoped release.
+* **The blocker is fixed.** A compiled program produced no output in a browser, and the cause was
+  the harness, not js_of_ocaml: its stdout is line-buffered, so the worker received one console
+  call per line and joined them with `''`, which deleted the newlines and left the whole program
+  inside the header comment it starts with — a 64 KB no-op script. The chunks are now rejoined with
+  newlines, and `compile()` fails loudly if a bundle ever arrives as a single line. Verified in the
+  browser: the program prints. See FINDINGS §3.2.
 * Then confirm in a real browser page.
 
 ### Step 3 — Trim and ship the stdlib

@@ -25,12 +25,14 @@ self.onmessage = (event) => {
 		// so a fake one is enough. Note Sys.argv.(0) is argv[1].
 		globalThis.process = { argv };
 		importScripts(script);
-		self.postMessage({ out: out.join(''), err: err.join('\n') });
+		// The chunks go back as they arrived, not joined: the caller knows how to
+		// put them together, and joining here would lose the newlines between
+		// them. js_of_ocaml's stdout is line-buffered, so it hands over one call
+		// per line, and a program that arrives as a single line is a program
+		// swallowed by its own header comment.
+		self.postMessage({ out, err });
 	} catch (error) {
-		self.postMessage({
-			out: out.join(''),
-			err: `${err.join('\n')}\n${error && error.message ? error.message : error}`
-		});
+		self.postMessage({ out, err: [...err, String((error && error.message) || error)] });
 	} finally {
 		console.log = realLog;
 		console.error = realError;

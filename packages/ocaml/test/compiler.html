@@ -57,7 +57,17 @@
           if (diagnostics.length) say('diagnostics', diagnostics.join('\n'));
           if (error) { say('status', `${error} (${ms} ms)`); return; }
 
-          say('status', `${js.length} bytes of JavaScript (${ms} ms)`);
+          // What the bundle says about itself, and what the page looks like from
+          // a program's point of view: a dummy primitive means the compiler
+          // could not find a runtime chunk, and a global `process` decides which
+          // filesystem the program picks.
+          const dummies = [...js.matchAll(/Function '([A-Za-z_]+)' not implemented/g)].map((m) => m[1]);
+          say(
+            'status',
+            `${js.length} bytes of JavaScript (${ms} ms)` +
+              ` · process: ${typeof globalThis.process}` +
+              ` · dummies: ${dummies.length ? [...new Set(dummies)].join(', ') : 'none'}`
+          );
           say('js', `${js.slice(0, 400)}\n…`);
           run(js);
         } catch (e) {

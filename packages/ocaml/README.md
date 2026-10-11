@@ -60,8 +60,11 @@ program runs in the page rather than as a process — the same trade every compi
 LiveCodes makes, and it is what buys page interaction, since the program *is* JavaScript by the time
 it runs. If you need a process-like contract, use the interpreter.
 
-About 8.7 MB of assets, fetched once and cacheable: 1.75 MB for the driver, 4.99 MB for js_of_ocaml,
-1.8 MB for the standard library. A small program compiles in about a second and emits roughly 28 KB.
+About 9.3 MB of assets, fetched once and cacheable: 1.75 MB for the driver, 4.99 MB for js_of_ocaml,
+0.8 MB of the js_of_ocaml runtime chunks the compiler looks for while emitting, and 1.8 MB for the
+standard library. A small program compiles in about a second and emits roughly 70 KB — the
+JavaScript is pretty-printed, which is what a Compiled Code pane wants, and it keeps the output
+line-oriented.
 
 ## The interpreter
 

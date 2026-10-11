@@ -76,7 +76,9 @@ require('./jsoo-browser.js');
 * Registration needs the **fake** device — `MlNodeDevice` has no `register`, so
   `caml_create_file` raises `cannot register file` — hence `--target-env=browser`.
 * **Settle the output side first** (FINDINGS §3.2, "Open gap"): there is no JS-side read hook,
-  so either capture stdout or add a hook. That decision shapes the whole adapter.
+  and `-o` is required (omitting it prints nothing), so the result has nowhere to go. The
+  realistic fix is a small **vendored patch** to emit the result or expose a read hook — not
+  the `sed` used for findlib.
 * Then confirm in a real browser page.
 
 ### Step 3 — Trim and ship the stdlib

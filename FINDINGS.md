@@ -291,11 +291,17 @@ or equivalent). The compiler writes `out.js` *into* its filesystem, and JavaScri
 supported way to read it back out. Two options, and one must be chosen before the adapter is
 built:
 
-1. Have the compiler write to **stdout** and capture that — js_of_ocaml's default stdout
-   flusher is `console.log`, so a page can intercept it. Needs the compiler to support stdout
-   output (`-o` handling).
-2. Add a small hook/wrapper. `jsoo_mount_point` is a global array of `{ path, device }` and the
-   fake device holds file contents, so a JS-side read is *possible* but unsupported.
+1. ~~Have the compiler write to stdout and capture that.~~ **Tested, not available:**
+   `node jsoo.js t.byte` with no `-o` prints **nothing** — the CLI requires `-o`.
+2. **Add a small hook or patch** — the realistic option. `jsoo_mount_point` is a global array of
+   `{ path, device }` and the fake device holds file contents, so a JS-side read is *possible*
+   but unsupported. Emitting the result to stdout after writing it, or exposing a read hook,
+   would settle it. This must become a **vendored patch** rather than the `sed` used for the
+   findlib opt-out.
+
+Do not expect to avoid this. It is the one place where the compilers' command-line shape
+genuinely does not fit a browser: everything on the input side works (`jsoo_fs_tmp`, argv),
+but the output has nowhere to go.
 
 **Unverified:** the browser (`fs_fake`) path itself. Node exercises `fs_node.js`. The same code
 path is intended, but this difference is exactly where an earlier bug hid, so it must be

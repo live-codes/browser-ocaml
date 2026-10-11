@@ -366,7 +366,16 @@ The whole source→JavaScript pipeline now runs in JavaScript. Three gotchas fou
   `['prog', 'main.ml']` leaves `Sys.argv` with nothing past index 0.
 * **The stdlib subset the linker needs** so far is `*.cmi`, `*.cma`, `*.cmo` (for
   `std_exit.cmo`) and **`runtime-launch-info`** — the same two non-obvious entries `ocamlc`
-  wanted. This is the starting point for trimming (HANDOVER Step 3).
+  wanted.
+
+**The stdlib asset: 49.5 MB → 1.8 MB, measured.** Copying every top-level file in `lib/ocaml` is
+438 files / 51,873,187 bytes. What the compiler and linker actually need is **71 files /
+1,838,202 bytes**: every `*.cmi`, plus `stdlib.cma`, `std_exit.cmo` and `runtime-launch-info`.
+`tools/compile-stdout/minimal.sh` builds that set and verifies the pipeline against it — compile
+and link unchanged (`exit 0`, 44,654 hex chars, `main.byte` 22,327 bytes).
+
+Sizes for planning, first load: driver ~1.68 MB + `jsoo.js` 5.23 MB + stdlib 1.8 MB ≈ **8.7 MB**,
+cached after that. LiveCodes' ruby-wasm and python-wasm are larger, so this is in range.
 
 **Confirmed: the machinery IS emitted in a default build.** An earlier version of this file
 claimed otherwise. That was a **bad grep** — the generated code reaches the global object through

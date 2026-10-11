@@ -94,12 +94,13 @@ require('./jsoo-browser.js');
 
 ### Step 3 — Trim and ship the stdlib
 
-49.5 MB is every top-level file in `lib/ocaml`. Find the minimum the two compilers actually
-open (start from `*.cmi`, `stdlib.cma`, `std_exit.cmo`, `runtime-launch-info`) and measure.
+**Measured: 71 files / 1.8 MB**, down from 438 files / 49.5 MB. The set is exactly every `*.cmi`,
+plus `stdlib.cma`, `std_exit.cmo` and `runtime-launch-info`.
+`tools/compile-stdout/minimal.sh` builds it and verifies the pipeline still works against it.
 
-Do **not** plan to register hundreds of files by hand: `js_of_ocaml build-fs -I DIR -o FILE
-[FILES]…` builds the filesystem as its own artifact, which is the mechanism to use. `--file`
-and `--ofs` are the related options.
+What remains is only *how to ship it*: `js_of_ocaml build-fs -I DIR -o FILE [FILES]…` builds the
+filesystem as its own artifact, rather than registering 71 files by hand at runtime. `--file` and
+`--ofs` are the related options.
 
 ### Step 4 — One entry point: source → JS
 

@@ -1000,13 +1000,30 @@ Two rules fell out of this that are easy to violate later:
 
 ### Zarith
 
-Arbitrary-precision arithmetic, and the one library here whose OCaml half is not enough: `zarith.cma`
-calls C stubs, and `zarith_stubs_js` implements them in a `runtime.js` that has to reach whatever runs
-the code. `jsoo_runtime` is how findlib says that, and a js_of_ocaml build reads it — which is why the
-interpreter links `zarith_stubs_js` in `src/dune` for its runtime alone, and why the compiler prepends
-a staged `libs/zarith_stubs_js.runtime.js` to any program that linked `zarith.cma`.
+Arbitrary-precision arithmetic, and the one library here whose OCaml half is not enough:
+`zarith.cma` calls C stubs, and `zarith_stubs_js` implements them in JavaScript.
 
-The image needed `libgmp-dev` before any of it could build: zarith's stubs are C, and `opam install
-zarith` fails without gmp, which is why only `zarith_stubs_js` was ever present. **Not yet verified end
-to end** — the Dockerfile and the staging scripts are updated, but the image has to be rebuilt before a
-`Z` program can be compiled or run, and that rebuild is what will confirm this.
+Installing it at all needed `libgmp-dev`: those stubs are C, and `opam install zarith` fails without
+gmp — which is why only `zarith_stubs_js` was ever present, and why `Z` was unbound rather than
+broken.
+
+Two things are settled and verified:
+
+- **Type-checking works.** A phrase that opens `Z` loads `zarith.cma` on demand and resolves its
+  interfaces like any other library.
+- **`zarith_top` must not be staged.** It sits in the same findlib directory, declares the same
+  interfaces, and the worker's table keeps the last entry it saw — so `Z` mapped to the *dependent*
+  archive and failed with "Reference to undefined compilation unit `Z'". `gen_libs.sh` skips `*_top`.
+
+Running it does not work yet, and the reason is exact. `zarith_stubs_js`'s `runtime.js` is not plain
+JavaScript: it is a js_of_ocaml **runtime chunk**, 1246 lines of `//Provides: ml_z_add` and
+`//Requires: caml_custom_ops`, some of it reaching into a table that js_of_ocaml's own runtime has to
+have populated. Concatenating it — which is what prepending does — leaves the definitions somewhere
+js_of_ocaml's primitive table cannot see them, so Dynlink fails with `TypeError: f.ml_z_init is not a
+function`. A chunk has to be given to js_of_ocaml's resolver, which emits it in the right position:
+
+- for the compiler, the driver owns the link, so `Js_of_ocaml_compiler.Builtins` is where to look;
+- for the interpreter, it has to reach the `js_of_ocaml` command line the way `+dynlink.js` does.
+
+Neither is done, so `Z` type-checks and then fails to load. The 32720-byte text prepend that was tried
+first is not in the tree; `docker/build.sh` says why.

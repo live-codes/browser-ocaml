@@ -69,6 +69,13 @@ for pkg in \
   for cma in "$dir"/*.cma; do
     [ -f "$cma" ] || continue
     name=$(basename "$cma" .cma)
+    # A toplevel-support archive lives in the same directory and shadows the real one:
+    # zarith_top declares the same interfaces as zarith, the manifest lists both under
+    # those names, and the worker keeps the last entry it saw -- so asking for Z loaded
+    # zarith_top, which is the *dependent* one, and the phrase failed with "Reference to
+    # undefined compilation unit Z". It is printer support for a native toplevel, and
+    # nothing here wants it.
+    case "$name" in *_top) continue ;; esac
     cp "$cma" "$out"/
     cp "$dir"/*.cmi "$out"/ 2>&1 || true
     cmis=$(cd "$dir" && ls *.cmi 2>&1 | tr '\n' ',' | sed 's/,$//')

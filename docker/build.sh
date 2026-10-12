@@ -43,6 +43,12 @@ opam exec -- js_of_ocaml --toplevel --dynlink --effects=cps \
   _build/default/src/worker.bc \
   -o web/worker.js
 
+# NOT here: zarith. zarith_stubs_js's runtime.js is a js_of_ocaml runtime chunk (it is all
+# //Provides: and //Requires: directives), and prepending it as text leaves its definitions
+# outside the primitive table js_of_ocaml builds -- Dynlink then fails with "TypeError:
+# f.ml_z_init is not a function". It has to be registered with js_of_ocaml's resolver, the
+# way +dynlink.js is, so the chunk lands in the right place. See FINDINGS.md section 10.
+
 echo "==> Done"
 ls -l web/worker.js
 

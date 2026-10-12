@@ -114,6 +114,13 @@
 /stdlib/jsoo_runtime__.cmi	jsoo_runtime__.cmi
 /stdlib/jsoo_runtime__Runtime_version.cmi	jsoo_runtime__Runtime_version.cmi
 /stdlib/jsoo_runtime.cma	jsoo_runtime.cma
+/stdlib/big_int_Z.cmi	big_int_Z.cmi
+/stdlib/q.cmi	q.cmi
+/stdlib/z.cmi	z.cmi
+/stdlib/zarith.cma	zarith.cma
+/stdlib/zarith_top.cma	zarith_top.cma
+/stdlib/zarith_stubs_js.cmi	zarith_stubs_js.cmi
+/stdlib/zarith_stubs_js.cma	zarith_stubs_js.cma
 /static/dlldigestif_c_stubs.so	dlldigestif_c_stubs.so
 /static/dllgraphics_js_stubs.so	dllgraphics_js_stubs.so
 /static/dllgraphics_stubs.so	dllgraphics_stubs.so
@@ -121,6 +128,7 @@
 /static/dlljs_of_ocaml_stubs.so	dlljs_of_ocaml_stubs.so
 /static/dlljsoo_runtime_stubs.so	dlljsoo_runtime_stubs.so
 /static/dlllwt_unix_stubs.so	dlllwt_unix_stubs.so
+/static/dllzarith.so	dllzarith.so
 /static/dllcamlruntime_eventsbyt-x86_64-pc-linux-gnu-a100.so	dllcamlruntime_eventsbyt-x86_64-pc-linux-gnu-a100.so
 /static/dllcamlstrbyt-x86_64-pc-linux-gnu-a100.so	dllcamlstrbyt-x86_64-pc-linux-gnu-a100.so
 /static/dllthreads-x86_64-pc-linux-gnu-a100.so	dllthreads-x86_64-pc-linux-gnu-a100.so

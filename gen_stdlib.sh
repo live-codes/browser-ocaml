@@ -49,45 +49,14 @@ for extra in std_exit unix/unix unix/unixLabels compiler-libs/topdirs; do
   fi
 done
 
-# The libraries a program can use, from the switch. Their interfaces are listed but
-# deliberately *not* copied here: a library gets loaded when the type-checker asks
-# for one of its interfaces and the interface is not where the toplevel looks. Put
-# them in stdlib/ and the lookup succeeds, the trigger never fires, and the archive
-# is never Dynlinked -- the phrase fails with "the interface of a module is loaded,
-# but its implementation is not". They are fetched from libs/ instead, which is
-# where gen_libs.sh puts them.
-: > "$out/units.txt.extra"
-for pkg in \
-  str unix graphics \
-  js_of_ocaml js_of_ocaml-lwt lwt \
-  re uutf jsonm fmt logs base64 xmlm digestif \
-  zarith zarith_stubs_js; do
-  dir=$(opam exec -- ocamlfind query "$pkg" 2>&1) || dir=""
-  [ -d "$dir" ] || continue
-  for cmi in "$dir"/*.cmi; do
-    [ -f "$cmi" ] || continue
-    basename "$cmi" >> "$out/units.txt.extra"
-  done
-done
-# js_of_ocaml's runtime is in a subdirectory of the compiler package. Its archive is
-# Dynlinked from libs/ too; its interfaces are listed for the same reason.
-runtime_dir=$(opam exec -- ocamlfind query js_of_ocaml-compiler 2>&1)/runtime
-if [ -d "$runtime_dir" ]; then
-  for cmi in "$runtime_dir"/*.cmi; do
-    [ -f "$cmi" ] || continue
-    basename "$cmi" >> "$out/units.txt.extra"
-  done
-fi
-
-# Manifest, fetched by the worker at start-up: the interfaces the toplevel ships
-# itself, then the ones it can load a library for.
-for cmi in "$out"/*.cmi; do
-  basename "$cmi"
-done > "$out/units.txt"
-cat "$out/units.txt.extra" >> "$out/units.txt"
-rm -f "$out/units.txt.extra"
-
-# Manifest, fetched by the worker at start-up.
+# The libraries a program can use are deliberately NOT listed here, and that is the
+# whole trick: the loader that Dynlinks a library only runs when the type-checker asks
+# for an interface this list does not have. List one and the lookup succeeds, the
+# archive is never loaded, and the phrase then fails with "the interface of a module is
+# loaded, but its implementation is not". What the worker needs in order to *find* a
+# library is its manifest, which gen_libs.sh writes.
+#
+# Manifest, fetched by the worker at start-up: the interfaces the toplevel ships itself.
 for cmi in "$out"/*.cmi; do
   basename "$cmi"
 done > "$out/units.txt"

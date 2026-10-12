@@ -207,19 +207,6 @@ const fetchLibraries = async (baseUrl, names) => {
 	);
 };
 
-// zarith's primitives are C stubs, and `zarith_stubs_js` implements them in JavaScript.
-// The compiler cannot emit that file itself: it links bytecode the way ocamlc does, and
-// `jsoo_runtime` is a findlib concern it never sees. Prepending it here is exactly where
-// js_of_ocaml's own runtime would have gone, so the program runs.
-const RUNTIME_STUBS = 'zarith_stubs_js.runtime.js';
-let runtimeStubs;
-
-const withRuntimeStubs = async (result, baseUrl) => {
-	if (!result.js || !required.has('zarith.cma')) return result;
-	runtimeStubs ??= await (await fetch(new URL('libs/' + RUNTIME_STUBS, baseUrl))).text();
-	return { ...result, js: runtimeStubs + result.js };
-};
-
 /**
  * Compile OCaml source to JavaScript, fetching whatever libraries it turns out to need.
  *
@@ -239,13 +226,13 @@ export async function compile(source, options) {
 		const added = filesFor(libraryIndex, missingUnits(result.diagnostics)).filter(
 			(name) => !required.has(name)
 		);
-		if (added.length === 0) return withRuntimeStubs(result, options.baseUrl);
+		if (added.length === 0) return result;
 		for (const name of added) required.add(name);
 		libs = [...required];
 	}
 	// Six rounds and still missing something: run once more, so the caller sees the
 	// compiler's own error rather than a guess about it.
-	return withRuntimeStubs(await compileOnce(source, { ...options, libs }), options.baseUrl);
+	return compileOnce(source, { ...options, libs });
 }
 
 async function compileOnce(

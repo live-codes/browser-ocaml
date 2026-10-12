@@ -13,3 +13,5 @@ fmt	fmt.cma	fmt.cmi
 logs	logs.cma	logs.cmi
 base64	base64.cma	base64.cmi
 xmlm	xmlm.cma	xmlm.cmi
+zarith	zarith.cma	big_int_Z.cmi,q.cmi,z.cmi
+zarith_stubs_js	zarith_stubs_js.cma	zarith_stubs_js.cmi

@@ -49,6 +49,32 @@ for extra in std_exit unix/unix unix/unixLabels compiler-libs/topdirs; do
   fi
 done
 
+# The libraries a program can use, from the switch. Same reasoning as the standard
+# library above: these are interfaces the type-checker asks for by module name, and
+# they are fetched on demand, so a program that names none of these modules fetches
+# none of these files.
+for pkg in \
+  str unix graphics \
+  js_of_ocaml js_of_ocaml-lwt lwt \
+  re uutf jsonm fmt logs base64 xmlm digestif; do
+  dir=$(opam exec -- ocamlfind query "$pkg" 2>&1) || dir=""
+  [ -d "$dir" ] || continue
+  for cmi in "$dir"/*.cmi; do
+    [ -f "$cmi" ] || continue
+    cp "$cmi" "$out"/
+  done
+done
+# js_of_ocaml's runtime lives in a subdirectory of the compiler package, and the
+# toplevel needs its archive rather than its interfaces -- it is Dynlinked, below,
+# in libs/. Its interfaces are copied all the same, because a program may name it.
+runtime_dir=$(opam exec -- ocamlfind query js_of_ocaml-compiler 2>&1)/runtime
+if [ -d "$runtime_dir" ]; then
+  for cmi in "$runtime_dir"/*.cmi; do
+    [ -f "$cmi" ] || continue
+    cp "$cmi" "$out"/
+  done
+fi
+
 # Manifest, fetched by the worker at start-up.
 for cmi in "$out"/*.cmi; do
   basename "$cmi"

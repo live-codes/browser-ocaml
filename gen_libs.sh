@@ -42,4 +42,37 @@ for dir in "$src"/*/; do
   echo "    $name -> $name.cma ($cmis)"
 done
 
+# The libraries that come with the switch, shipped as they are: each archive, to be
+# Dynlinked, with its interfaces listed so the worker can load it when code names one
+# of its modules. Nothing is fetched until then.
+#
+# js_of_ocaml's runtime is separate and first: it is in a subdirectory of the compiler
+# package, and js_of_ocaml.cma references it, so it has to be loadable on its own.
+runtime_dir=$(opam exec -- ocamlfind query js_of_ocaml-compiler 2>&1)/runtime
+if [ -d "$runtime_dir" ]; then
+  for cma in "$runtime_dir"/*.cma; do
+    [ -f "$cma" ] || continue
+    name=$(basename "$cma" .cma)
+    cp "$cma" "$out"/
+    cmis=$(cd "$runtime_dir" && ls *.cmi 2>&1 | tr '\n' ',' | sed 's/,$//')
+    printf '%s\t%s\t%s\n' "$name" "$(basename "$cma")" "$cmis" >> "$out/manifest.txt"
+  done
+fi
+
+for pkg in \
+  str unix graphics \
+  js_of_ocaml js_of_ocaml-lwt lwt \
+  re uutf jsonm fmt logs base64 xmlm digestif; do
+  dir=$(opam exec -- ocamlfind query "$pkg" 2>&1) || dir=""
+  [ -d "$dir" ] || continue
+  for cma in "$dir"/*.cma; do
+    [ -f "$cma" ] || continue
+    name=$(basename "$cma" .cma)
+    cp "$cma" "$out"/
+    cp "$dir"/*.cmi "$out"/ 2>&1 || true
+    cmis=$(cd "$dir" && ls *.cmi 2>&1 | tr '\n' ',' | sed 's/,$//')
+    printf '%s\t%s\t%s\n' "$name" "$(basename "$cma")" "$cmis" >> "$out/manifest.txt"
+  done
+done
+
 echo "==> $(wc -l < "$out/manifest.txt") libraries in $out"

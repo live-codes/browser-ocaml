@@ -183,40 +183,45 @@ let load_library library =
   if not (Hashtbl.mem libraries_loaded library) then
     match Hashtbl.find_opt library_archive library with
     | None -> ()
-    | Some archive -> (
-        match fetch (Filename.concat "libs" archive) with
-        | None ->
-            prerr_endline ("[library] could not fetch " ^ archive)
-        | Some data ->
-            (* Relative, for the same reason as the .cmi staging and the exit
-               code file: an absolute path needs a device mounted at the root,
-               which Node's filesystem does not provide. [Topdirs.dir_load]
-               resolves the same relative path. *)
-            let path = Filename.concat "ocaml-wasm-libs" archive in
-            if not (Sys.file_exists "ocaml-wasm-libs") then
-              (try Sys.mkdir "ocaml-wasm-libs" 0o755 with Sys_error _ -> ());
-            let oc = open_out_bin path in
-            output_bytes oc data;
-            close_out oc;
-            (* Use the toplevel's own loader rather than [Dynlink.loadfile].
-               Dynlink refuses outright while [Sys.interactive] is set and,
-               even with that cleared, it registers the code without telling
-               the toplevel -- so later phrases still fail to link against the
-               unit. [Topdirs.dir_load] is what `#load` calls, and it does the
-               toplevel bookkeeping. *)
-            let interactive = !Sys.interactive in
-            Sys.interactive := false;
-            (try
-               Topdirs.dir_load Format.err_formatter path;
-               Hashtbl.replace libraries_loaded library ()
-             with
-            | Dynlink.Error e ->
-                prerr_endline
-                  ("[library] " ^ library ^ ": " ^ Dynlink.error_message e)
-            | e ->
-                prerr_endline
-                  ("[library] " ^ library ^ ": " ^ Printexc.to_string e));
-            Sys.interactive := interactive)
+    | Some archives -> (
+        (* The archive field is a list, loaded in order, because an archive may need
+           another one first. js_of_ocaml is the case that does: its runtime is a
+           separate archive, and nothing ever asks for the runtime's interface, so
+           without this it is never loaded and Dynlink fails with a symbol error. *)
+        Hashtbl.replace libraries_loaded library ();
+        List.iter
+          (fun archive ->
+            match fetch (Filename.concat "libs" archive) with
+            | None -> prerr_endline ("[library] could not fetch " ^ archive)
+            | Some data ->
+                (* Relative, for the same reason as the .cmi staging and the exit
+                   code file: an absolute path needs a device mounted at the root,
+                   which Node's filesystem does not provide. [Topdirs.dir_load]
+                   resolves the same relative path. *)
+                let path = Filename.concat "ocaml-wasm-libs" archive in
+                if not (Sys.file_exists "ocaml-wasm-libs") then
+                  (try Sys.mkdir "ocaml-wasm-libs" 0o755 with Sys_error _ -> ());
+                let oc = open_out_bin path in
+                output_bytes oc data;
+                close_out oc;
+                (* Use the toplevel's own loader rather than [Dynlink.loadfile].
+                   Dynlink refuses outright while [Sys.interactive] is set and,
+                   even with that cleared, it registers the code without telling
+                   the toplevel -- so later phrases still fail to link against the
+                   unit. [Topdirs.dir_load] is what `#load` calls, and it does the
+                   toplevel bookkeeping. *)
+                let interactive = !Sys.interactive in
+                Sys.interactive := false;
+                (try Topdirs.dir_load Format.err_formatter path
+                 with
+                | Dynlink.Error e ->
+                    prerr_endline
+                      ("[library] " ^ library ^ ": " ^ Dynlink.error_message e)
+                | e ->
+                    prerr_endline
+                      ("[library] " ^ library ^ ": " ^ Printexc.to_string e));
+                Sys.interactive := interactive)
+          (String.split_on_char ' ' archives))
 
 let install_cmi_loader () =
   load_library_manifest ();

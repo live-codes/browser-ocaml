@@ -49,10 +49,14 @@ for extra in std_exit unix/unix unix/unixLabels compiler-libs/topdirs; do
   fi
 done
 
-# The libraries a program can use, from the switch. Same reasoning as the standard
-# library above: these are interfaces the type-checker asks for by module name, and
-# they are fetched on demand, so a program that names none of these modules fetches
-# none of these files.
+# The libraries a program can use, from the switch. Their interfaces are listed but
+# deliberately *not* copied here: a library gets loaded when the type-checker asks
+# for one of its interfaces and the interface is not where the toplevel looks. Put
+# them in stdlib/ and the lookup succeeds, the trigger never fires, and the archive
+# is never Dynlinked -- the phrase fails with "the interface of a module is loaded,
+# but its implementation is not". They are fetched from libs/ instead, which is
+# where gen_libs.sh puts them.
+: > "$out/units.txt.extra"
 for pkg in \
   str unix graphics \
   js_of_ocaml js_of_ocaml-lwt lwt \
@@ -61,19 +65,26 @@ for pkg in \
   [ -d "$dir" ] || continue
   for cmi in "$dir"/*.cmi; do
     [ -f "$cmi" ] || continue
-    cp "$cmi" "$out"/
+    basename "$cmi" >> "$out/units.txt.extra"
   done
 done
-# js_of_ocaml's runtime lives in a subdirectory of the compiler package, and the
-# toplevel needs its archive rather than its interfaces -- it is Dynlinked, below,
-# in libs/. Its interfaces are copied all the same, because a program may name it.
+# js_of_ocaml's runtime is in a subdirectory of the compiler package. Its archive is
+# Dynlinked from libs/ too; its interfaces are listed for the same reason.
 runtime_dir=$(opam exec -- ocamlfind query js_of_ocaml-compiler 2>&1)/runtime
 if [ -d "$runtime_dir" ]; then
   for cmi in "$runtime_dir"/*.cmi; do
     [ -f "$cmi" ] || continue
-    cp "$cmi" "$out"/
+    basename "$cmi" >> "$out/units.txt.extra"
   done
 fi
+
+# Manifest, fetched by the worker at start-up: the interfaces the toplevel ships
+# itself, then the ones it can load a library for.
+for cmi in "$out"/*.cmi; do
+  basename "$cmi"
+done > "$out/units.txt"
+cat "$out/units.txt.extra" >> "$out/units.txt"
+rm -f "$out/units.txt.extra"
 
 # Manifest, fetched by the worker at start-up.
 for cmi in "$out"/*.cmi; do

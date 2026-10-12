@@ -71,7 +71,15 @@ for pkg in \
     cp "$cma" "$out"/
     cp "$dir"/*.cmi "$out"/ 2>&1 || true
     cmis=$(cd "$dir" && ls *.cmi 2>&1 | tr '\n' ',' | sed 's/,$//')
-    printf '%s\t%s\t%s\n' "$name" "$(basename "$cma")" "$cmis" >> "$out/manifest.txt"
+    # An archive may need another loaded first. js_of_ocaml is the one that does:
+    # js_of_ocaml.cma references the runtime, which is its own archive in a
+    # subdirectory of the compiler package, and no program ever asks for the
+    # runtime's interface -- so nothing would ever trigger it.
+    archives=$(basename "$cma")
+    case "$name" in
+      js_of_ocaml) archives="jsoo_runtime.cma $archives" ;;
+    esac
+    printf '%s\t%s\t%s\n' "$name" "$archives" "$cmis" >> "$out/manifest.txt"
   done
 done
 

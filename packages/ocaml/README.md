@@ -115,12 +115,13 @@ override per run. `compiler.dispose()` stops the worker.
 **Libraries load on demand.** `assets/interpreter/libs/manifest.txt` says which archive implements
 which modules; when the type-checker asks for an interface the toplevel cannot find, the archive is
 fetched, Dynlinked, and the interface read out of it. A program that names none of them fetches none
-of them. Fifteen libraries are staged: js_of_ocaml's browser runtime (`Js`, `Dom_html`, the web APIs),
-the standard library's own extras (`Str`, `Unix`, `Graphics`), Lwt with `js_of_ocaml-lwt`, pure
-OCaml packages such as `Re`, `uutf`, `jsonm`, `fmt`, `logs`, `base64` and `xmlm`, and a small `greet`
-fixture the Node check uses. An archive must be
-built for the same OCaml version and be pure enough to run in a browser — no C stubs, no threads —
-which is a toolchain step, not something this package can do at runtime.
+of them. Seventeen libraries are staged: js_of_ocaml's browser runtime (`Js`, `Dom_html`, the web
+APIs), the standard library's own extras (`Str`, `Unix`, `Graphics`), Lwt with `js_of_ocaml-lwt`,
+pure OCaml packages such as `Re`, `uutf`, `jsonm`, `fmt`, `logs`, `base64` and `xmlm`, Zarith —
+arbitrary-precision arithmetic, whose C stubs `zarith_stubs_js` replaces in JavaScript — and a small
+`greet` fixture the Node check uses. An archive must be built for the same OCaml version and either
+avoid C stubs or have a JavaScript replacement for them; that is a toolchain step, not something this
+package can do at runtime.
 
 **No DOM, though the bindings are there.** The toplevel runs in a Worker, so `Js` and `Dom_html` load
 on demand but there is no `document` to reach through them. `Js` itself works normally. Use the

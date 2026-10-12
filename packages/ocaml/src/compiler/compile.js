@@ -235,6 +235,21 @@ export async function compile(source, options) {
 	return compileOnce(source, { ...options, libs });
 }
 
+// zarith's primitives are C stubs, and `zarith_stubs_js` implements them in JavaScript as a
+// js_of_ocaml runtime chunk -- `//Provides:` and `//Requires:` lines that have to be a *link
+// input* to js_of_ocaml, not text pasted into the output. Only as an input does js_of_ocaml
+// honour them and put each definition where its dependencies already exist; concatenated,
+// they land outside its primitive table and the program fails at load with
+// "f.ml_z_init is not a function".
+const RUNTIME_CHUNK = 'zarith_stubs_js.runtime.js';
+const CHUNK_AS_INPUT = 'zarith_stubs_js.js';
+let runtimeChunk;
+
+const loadRuntimeChunk = async (baseUrl) => {
+	runtimeChunk ??= await (await fetch(new URL('libs/' + RUNTIME_CHUNK, baseUrl))).text();
+	return runtimeChunk;
+};
+
 async function compileOnce(
 	source,
 	{ baseUrl, driver = 'compile_stdout.browser.js', jsoo = 'jsoo.js', stdlib = STDLIB, libs = [] }
@@ -271,12 +286,31 @@ async function compileOnce(
 	// `--pretty` is for the reader -- the emitted JavaScript is what a Compiled
 	// Code pane shows -- and it also keeps the output line-oriented, which the
 	// joining below depends on.
+	const stubs = required.has('zarith.cma') ? await loadRuntimeChunk(baseUrl) : null;
 	const back = await runInWorker(
 		baseUrl,
 		new URL(jsoo, baseUrl).href,
-		[{ name: 'main.byte', content: bytesToString(hexToBytes(hex)) }, ...runtimeFiles],
+		[
+			{ name: 'main.byte', content: bytesToString(hexToBytes(hex)) },
+			...runtimeFiles,
+			// The chunk is mounted as a file and named on the command line, which is what
+			// makes js_of_ocaml treat it as a link input rather than something to paste in.
+			...(stubs ? [{ name: CHUNK_AS_INPUT, content: stubs }] : [])
+		],
 		{},
-		['node', 'js_of_ocaml', 'main.byte', '-o', '-', '--target-env=browser', '--pretty']
+		[
+			'node',
+			'js_of_ocaml',
+			// The chunk comes before the bytecode: js_of_ocaml decides how to read its
+			// positional inputs from the first one, so a .js has to lead or the bytecode
+			// gets parsed as JavaScript.
+			...(stubs ? [CHUNK_AS_INPUT] : []),
+			'main.byte',
+			'-o',
+			'-',
+			'--target-env=browser',
+			'--pretty'
+		]
 	);
 	const backDiagnostics = diagnosticsOf(back.err.join('\n'));
 	// js_of_ocaml's stdout is line-buffered, so it hands over one console call

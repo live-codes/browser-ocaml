@@ -1003,27 +1003,43 @@ Two rules fell out of this that are easy to violate later:
 Arbitrary-precision arithmetic, and the one library here whose OCaml half is not enough:
 `zarith.cma` calls C stubs, and `zarith_stubs_js` implements them in JavaScript.
 
-Installing it at all needed `libgmp-dev`: those stubs are C, and `opam install zarith` fails without
-gmp — which is why only `zarith_stubs_js` was ever present, and why `Z` was unbound rather than
-broken.
+Three things had to be true, and each was a separate failure on the way.
 
-Two things are settled and verified:
+**It has to be installed.** Those primitives are C, so building it needs gmp, and `opam install
+zarith` fails without `libgmp-dev`. Only `zarith_stubs_js` was ever present — it is pure OCaml plus a
+`runtime.js` and installs on its own — so `Z` was unbound rather than broken, and the staging queries
+found nothing, quietly, because they had been made non-fatal.
 
-- **Type-checking works.** A phrase that opens `Z` loads `zarith.cma` on demand and resolves its
-  interfaces like any other library.
-- **`zarith_top` must not be staged.** It sits in the same findlib directory, declares the same
-  interfaces, and the worker's table keeps the last entry it saw — so `Z` mapped to the *dependent*
-  archive and failed with "Reference to undefined compilation unit `Z'". `gen_libs.sh` skips `*_top`.
+**The right archive has to win.** `zarith_top.cma` sits in `zarith`'s own findlib directory and
+declares the same interfaces. The manifest listed both under those names, and the worker keeps the
+last entry it saw, so asking for `Z` loaded the *dependent* archive and failed with "Reference to
+undefined compilation unit `Z'". `gen_libs.sh` skips `*_top`. A library's interfaces must also stay
+out of `units.txt`: listing one there satisfies the lookup, so the trigger never fires.
 
-Running it does not work yet, and the reason is exact. `zarith_stubs_js`'s `runtime.js` is not plain
-JavaScript: it is a js_of_ocaml **runtime chunk**, 1246 lines of `//Provides: ml_z_add` and
-`//Requires: caml_custom_ops`, some of it reaching into a table that js_of_ocaml's own runtime has to
-have populated. Concatenating it — which is what prepending does — leaves the definitions somewhere
-js_of_ocaml's primitive table cannot see them, so Dynlink fails with `TypeError: f.ml_z_init is not a
-function`. A chunk has to be given to js_of_ocaml's resolver, which emits it in the right position:
+**The stubs' runtime has to be a link input, not text.** This is the one that took longest.
+`zarith_stubs_js`'s `runtime.js` is a js_of_ocaml runtime chunk — 1246 lines of `//Provides: ml_z_add`
+and `//Requires: caml_custom_ops`, some of it reaching into a table js_of_ocaml's own runtime has to
+have populated. Concatenated, those definitions sit outside js_of_ocaml's primitive table and the
+program dies at load with `TypeError: f.ml_z_init is not a function`. Given to js_of_ocaml as a
+*positional input*, it is linked properly and only the primitives actually used are emitted — 14 KB
+rather than the file's 32 KB.
 
-- for the compiler, the driver owns the link, so `Js_of_ocaml_compiler.Builtins` is where to look;
-- for the interpreter, it has to reach the `js_of_ocaml` command line the way `+dynlink.js` does.
+Two details of that, both found the hard way:
 
-Neither is done, so `Z` type-checks and then fails to load. The 32720-byte text prepend that was tried
-first is not in the tree; `docker/build.sh` says why.
+- **The chunk has to come before the bytecode.** js_of_ocaml decides how to read its positional
+  inputs from the first one, so a `.js` first means JavaScript for the rest. Put the chunk afterwards
+  and it tries to parse the bytecode as JavaScript: `cannot parse file worker.bc`.
+- **`--file` does not do this.** It registers the file in the pseudo-filesystem, which embeds all
+  32 KB and resolves nothing.
+
+The interpreter passes the chunk on the `js_of_ocaml` command line; the compiler mounts it as a file
+and names it in `jsoo.js`'s arguments. Both leave it out unless the program reached for `zarith.cma`.
+
+Verified in the browser on both sides with 30-digit numbers and `2^100` —
+`1111111110111111111011111111100` and `1267650600228229401496703205376` — with no dummy primitives
+and no missing-primitive warning.
+
+**A server note worth an hour of someone's time:** `python -m http.server` is single-threaded, and a
+compile fetches 31 runtime chunks at once. Some of them come back "Failed to fetch" and the compile
+dies before it starts — looking exactly like a bug in the code that was just changed. Use
+`npm run serve` (the node server) for anything browser-facing.

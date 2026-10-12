@@ -123,8 +123,92 @@ async function loadRuntime(baseUrl) {
 const STDLIB = 'stdlib.js';
 const STDLIB_DIR = '/stdlib';
 
+// The libraries a program names are fetched on demand rather than shipped up front.
+// `libs/index.txt` says which files a module needs, and a compile that could not find
+// a module is retried with those files added. Only what a program uses is fetched, and
+// once fetched it stays, so the set converges as a session goes on.
+const required = new Set();
+let libraryIndex;
+
+const loadLibraryIndex = async (baseUrl) => {
+	const byUnit = new Map();
+	try {
+		const text = await (await fetch(new URL('libs/index.txt', baseUrl))).text();
+		for (const line of lines(text)) {
+			const [unit, files] = line.split('\t');
+			if (unit && files) byUnit.set(unit.toLowerCase(), files.split(' ').filter(Boolean));
+		}
+		// The stub libraries are small and every link may need them, so they are always
+		// fetched rather than being part of a group.
+		const stubs = await (await fetch(new URL('libs/stubs.txt', baseUrl))).text();
+		for (const name of lines(stubs)) required.add(name.trim());
+	} catch {
+		// No index, so nothing can be fetched on demand: a program gets the standard
+		// library and whatever else it can link without one.
+	}
+	return byUnit;
+};
+
+// The two ways the compiler says a library is missing: a module it cannot find at all,
+// and a unit with nothing to link against.
+const missingUnits = (diagnostics) => {
+	const text = diagnostics.join('\n');
+	const names = new Set();
+	for (const [, name] of text.matchAll(/Unbound module ([A-Za-z0-9_']+)/g)) names.add(name);
+	for (const [, block] of text.matchAll(
+		/No implementation provided for the following modules:([\s\S]*?)(?:\n\s*\n|$)/g
+	)) {
+		for (const [, name] of block.matchAll(/([A-Za-z0-9_']+) referenced from/g)) names.add(name);
+	}
+	return [...names];
+};
+
+const filesFor = (byUnit, names) => {
+	const files = new Set();
+	const known = [...byUnit.keys()];
+	for (const name of names) {
+		const key = name.toLowerCase();
+		const exact = byUnit.get(key);
+		if (exact) {
+			for (const file of exact) files.add(file);
+			continue;
+		}
+		// A submodule is named without its package: Dom_html is Js_of_ocaml's.
+		for (const unit of known.filter((u) => u.endsWith('__' + key))) {
+			for (const file of byUnit.get(unit)) files.add(file);
+		}
+	}
+	return [...files];
+};
+
+// Byte by byte, not through TextDecoder: these are binary files, and decoding them as
+// UTF-8 would corrupt every byte above 127 into something else entirely.
+const toByteString = (bytes) => {
+	const chunks = [];
+	for (let i = 0; i < bytes.length; i += 0x8000) {
+		chunks.push(String.fromCharCode(...bytes.subarray(i, i + 0x8000)));
+	}
+	return chunks.join('');
+};
+
+// The library files are fetched here, in the page, rather than in the worker: a worker
+// created from a data URL has an opaque origin, so a fetch from inside it to the server
+// that served the page is refused. The page is same-origin, so it can.
+const fetchLibraries = async (baseUrl, names) => {
+	const base = new URL('libs/', baseUrl);
+	return Promise.all(
+		names.map(async (name) => {
+			const bytes = new Uint8Array(await (await fetch(new URL(name, base))).arrayBuffer());
+			// The stub libraries are looked for at /static, from the stub directory of
+			// the build; everything else is read from the compiler's library directory.
+			const path = (name.startsWith('dll') ? '/static/' : '/stdlib/') + name;
+			return { path, content: toByteString(bytes) };
+		})
+	);
+};
+
 /**
- * Compile OCaml source to JavaScript.
+ * Compile OCaml source to JavaScript, fetching whatever libraries it turns out to need.
  *
  * @param {string} source
  * @param {object} options
@@ -134,14 +218,35 @@ const STDLIB_DIR = '/stdlib';
  * @param {string} [options.stdlib] - the filesystem artifact carrying the standard library.
  * @returns {Promise<{js: string|null, diagnostics: string[], error?: string}>}
  */
-export async function compile(source, { baseUrl, driver = 'compile_stdout.browser.js', jsoo = 'jsoo.js', stdlib = STDLIB }) {
+export async function compile(source, options) {
+	libraryIndex ??= await loadLibraryIndex(options.baseUrl);
+	let libs = [...required];
+	for (let attempt = 0; attempt < 6; attempt++) {
+		const result = await compileOnce(source, { ...options, libs });
+		const added = filesFor(libraryIndex, missingUnits(result.diagnostics)).filter(
+			(name) => !required.has(name)
+		);
+		if (added.length === 0) return result;
+		for (const name of added) required.add(name);
+		libs = [...required];
+	}
+	// Six rounds and still missing something: run once more, so the caller sees the
+	// compiler's own error rather than a guess about it.
+	return compileOnce(source, { ...options, libs });
+}
+
+async function compileOnce(
+	source,
+	{ baseUrl, driver = 'compile_stdout.browser.js', jsoo = 'jsoo.js', stdlib = STDLIB, libs = [] }
+) {
 	if (typeof source !== 'string') throw new TypeError('compile: source must be a string');
 	const runtimeFiles = await loadRuntime(baseUrl);
 	const files = [{ name: 'main.ml', content: source }, ...runtimeFiles];
+	const libraryFiles = await fetchLibraries(baseUrl, libs);
 
-	// Source -> bytecode, as hex. The library files are fetched by the worker itself,
-	// from this manifest -- one request each, from the browser's cache after the
-	// first compile. The bytecode -> JavaScript step needs none of them.
+	// Source -> bytecode, as hex. The library files go over with the source, one request
+	// each, from the browser's cache after the first compile. The bytecode ->
+	// JavaScript step needs none of them.
 	const front = await runInWorker(
 		baseUrl,
 		new URL(driver, baseUrl).href,
@@ -149,7 +254,7 @@ export async function compile(source, { baseUrl, driver = 'compile_stdout.browse
 		{ OCAMLLIB: STDLIB_DIR },
 		['node', 'compile_stdout', 'main.ml'],
 		[new URL(stdlib, baseUrl).href],
-		new URL('libs/manifest.txt', baseUrl).href
+		libraryFiles
 	);
 	const diagnostics = diagnosticsOf(front.err.join('\n'));
 	// The driver prints its hex with no newlines anywhere, so its chunks are

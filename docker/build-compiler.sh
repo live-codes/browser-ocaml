@@ -122,60 +122,74 @@ opam exec -- js_of_ocaml build-fs -I "$ocamllib" "$@" -o "$out/stdlib.js"
 echo "    $# files -> $(wc -c < "$out/stdlib.js") bytes"
 
 echo "==> The libraries the compiler can link"
-# Plain files, fetched by the worker itself, listed in a manifest. They are binary,
-# and the artifact the standard library uses escapes every byte above 127 -- which
-# turned 12 MB of archives into 31 MB of text. Fetched, they stay as they are on
-# disk, and the browser caches them, so every compile after the first is a cache read.
+# Plain files, fetched by the worker itself, plus an index saying which module needs
+# which files -- so a program fetches only the libraries it names rather than all of
+# them. They are binary, and the artifact the standard library uses escapes every byte
+# above 127, which turned 12 MB of archives into 31 MB of text. Fetched, they stay as
+# they are on disk, and the browser caches them.
 #
 # What goes in: js_of_ocaml's browser runtime, with Js, Dom_html and the web APIs;
 # the standard library's own extras, Str and Unix and Graphics; and the pure-OCaml
 # packages baked into the image. Each is taken from its own findlib directory, not
 # its dependency tree -- which for js_of_ocaml alone is tens of megabytes of
 # interfaces no program of ours will ever name.
-: > /tmp/fs-cmas
 : > "$out/libs/manifest.txt"
-add_lib_dir() {
-  [ -d "$1" ] || return 0
-  for f in "$1"/*.cmi "$1"/*.cma; do
-    [ -f "$f" ] || continue
-    n=$(basename "$f")
-    cp "$f" "$out/libs/$n"
-    printf '/stdlib/%s\t%s\n' "$n" "$n" >> "$out/libs/manifest.txt"
-    case "$n" in *.cma) printf '%s\n' "$n" >> /tmp/fs-cmas ;; esac
+: > "$out/libs/index.txt"
+add_group() {
+  group=$1
+  shift
+  : > /tmp/fs-group
+  for dir in "$@"; do
+    [ -d "$dir" ] || continue
+    for f in "$dir"/*.cmi "$dir"/*.cma; do
+      [ -f "$f" ] || continue
+      n=$(basename "$f")
+      cp "$f" "$out/libs/$n"
+      printf '%s\n' "$n" >> /tmp/fs-group
+      printf '/stdlib/%s\t%s\n' "$n" "$n" >> "$out/libs/manifest.txt"
+    done
   done
+  files=$(tr '\n' ' ' < /tmp/fs-group)
+  # Every interface in a group answers to the same set of files: naming any one of
+  # them means the library is in use, so all of it is fetched.
+  for f in $files; do
+    case "$f" in
+      *.cmi) printf '%s\t%s\n' "${f%.cmi}" "$files" >> "$out/libs/index.txt" ;;
+    esac
+  done
+  : > /tmp/fs-group
+  echo "    $group: $(printf '%s' "$files" | wc -w) files"
 }
 for pkg in \
   str unix graphics \
-  js_of_ocaml js_of_ocaml-lwt lwt \
-  re uutf jsonm fmt logs base64 xmlm zarith zarith_stubs_js digestif; do
-  add_lib_dir "$(opam exec -- ocamlfind query "$pkg" 2>&1)"
+  js_of_ocaml-lwt lwt \
+  re uutf jsonm fmt logs base64 xmlm digestif; do
+  add_group "$pkg" "$(opam exec -- ocamlfind query "$pkg" 2>&1)"
 done
-# js_of_ocaml.cma references Jsoo_runtime, which is in a subdirectory of the compiler
-# package rather than at its top level.
-add_lib_dir "$(opam exec -- ocamlfind query js_of_ocaml-compiler 2>&1)/runtime"
+# js_of_ocaml is one group with two directories: its runtime is a separate archive in
+# a subdirectory of the compiler package, and js_of_ocaml.cma references it. Kept as
+# its own group it would never load, because nothing asks for its interfaces.
+add_group js_of_ocaml \
+  "$(opam exec -- ocamlfind query js_of_ocaml 2>&1)" \
+  "$(opam exec -- ocamlfind query js_of_ocaml-compiler 2>&1)/runtime"
 # Bytecode linking checks that each archive's stub library exists, though the
 # implementation of those primitives comes from js_of_ocaml's JavaScript runtime and
 # never from the .so. This build looks for them at /static; they are there to be
-# found, not to be run. Two places ship them: findlib's own stublibs, and the ones
-# that come with the standard library (Str, Unix).
+# found, not to be run. They are small, so they are always fetched rather than
+# grouped. Two places ship them: findlib's own stublibs, and the ones that come with
+# the standard library (Str, Unix).
+: > "$out/libs/stubs.txt"
 for stubdir in "$(opam var lib)/stublibs" "$ocamllib/stublibs"; do
   [ -d "$stubdir" ] || continue
   for f in "$stubdir"/*.so; do
     [ -f "$f" ] || continue
     n=$(basename "$f")
     cp "$f" "$out/libs/$n"
+    printf '%s\n' "$n" >> "$out/libs/stubs.txt"
     printf '/static/%s\t%s\n' "$n" "$n" >> "$out/libs/manifest.txt"
   done
 done
-# What the linker links, and the *order* matters: a library has to come before the
-# archive that references it. stdlib first, because that is where a program's runtime
-# starts, then js_of_ocaml's runtime, then the rest sorted so the list does not churn
-# between builds.
-printf 'stdlib.cma\n' > "$out/libs/cmas.txt"
-printf 'jsoo_runtime.cma\n' >> "$out/libs/cmas.txt"
-sort -u /tmp/fs-cmas | grep -v -e '^stdlib\.cma$' -e '^jsoo_runtime\.cma$' >> "$out/libs/cmas.txt" || true
-printf '/stdlib/cmas.txt\tcmas.txt\n' >> "$out/libs/manifest.txt"
-echo "    $(grep -c . "$out/libs/manifest.txt") files, $(grep -c . "$out/libs/cmas.txt") libraries"
+echo "    $(grep -c . "$out/libs/index.txt") units indexed, $(grep -c . "$out/libs/manifest.txt") files staged"
 
 echo "==> The worker harness"
 cp packages/ocaml/src/compiler/worker.js "$out/worker.js"

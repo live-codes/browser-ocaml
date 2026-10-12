@@ -21,31 +21,29 @@ const bytesToString = (bytes) => {
 	return s;
 };
 
-// The libraries a program can link are fetched here rather than shipped inside a
-// filesystem artifact: they are binary, and that format escapes every byte above 127,
-// which tripled them. Fetched, they stay as they are on disk -- and the browser caches
-// them, so this is a cache read on every compile after the first.
-//
-// Each arrives as `path` and the file to fetch for it, and is queued the same way the
-// artifact queues its files, for the program's runtime to replay as it starts.
-const mountLibraries = async (manifestUrl) => {
-	const base = new URL('.', manifestUrl);
-	const manifest = await (await fetch(manifestUrl)).text();
-	const entries = manifest
-		.split('\n')
-		.map((line) => line.trim())
-		.filter((line) => line !== '')
-		.map((line) => line.split('\t'));
-	await Promise.all(
-		entries.map(async ([path, name]) => {
-			const bytes = new Uint8Array(await (await fetch(new URL(name, base))).arrayBuffer());
-			globalThis.jsoo_fs_tmp.push({ name: path, content: bytesToString(bytes) });
-		})
-	);
+// The library files this compile needs. The *page* fetches them, not this worker: a
+// worker created from a data URL has an opaque origin, so a fetch from here to the
+// server that served the page is refused. They arrive with the path each belongs at,
+// which is the same shape a filesystem artifact uses.
+const mountLibraries = (files) => {
+	const archives = [];
+	for (const { path, content } of files) {
+		globalThis.jsoo_fs_tmp.push({ name: path, content });
+		if (path.endsWith('.cma')) archives.push(path.slice(path.lastIndexOf('/') + 1));
+	}
+	// What the linker links, and the order matters: a library has to come before the
+	// archive that references it. stdlib first, because that is where a program's
+	// runtime starts, then js_of_ocaml's runtime, then the rest.
+	const rank = (name) => (name === 'stdlib.cma' ? 0 : name === 'jsoo_runtime.cma' ? 1 : 2);
+	archives.sort((a, b) => rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0));
+	globalThis.jsoo_fs_tmp.push({
+		name: '/stdlib/cmas.txt',
+		content: ['stdlib.cma', ...archives].join('\n') + '\n',
+	});
 };
 
 self.onmessage = async (event) => {
-	const { script, files, env, argv, fs = [], libs } = event.data;
+	const { script, files, env, argv, fs = [], libs = [] } = event.data;
 	const out = [];
 	const err = [];
 	const realLog = console.log;
@@ -67,7 +65,7 @@ self.onmessage = async (event) => {
 		// not load-bearing, but this is the cheaper one.
 		for (const url of fs) importScripts(url);
 		// Then the libraries, which have to be in place before the program starts.
-		if (libs) await mountLibraries(libs);
+		if (libs.length > 0) mountLibraries(libs);
 		importScripts(script);
 		// The chunks go back as they arrived, not joined: the caller knows how to
 		// put them together, and joining here would lose the newlines between

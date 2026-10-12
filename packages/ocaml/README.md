@@ -60,13 +60,14 @@ program runs in the page rather than as a process — the same trade every compi
 LiveCodes makes, and it is what buys page interaction, since the program *is* JavaScript by the time
 it runs. If you need a process-like contract, use the interpreter.
 
-About 14 MB of assets, fetched once and cacheable: 2.6 MB for the driver, 5.02 MB for js_of_ocaml,
-0.8 MB of the js_of_ocaml runtime chunks the compiler looks for while emitting, and 5.67 MB for the
-standard library. That last one is a single `js_of_ocaml build-fs` artifact carrying all 75 files
-rather than 75 fetched separately — about 2.6× the size, because a byte above 127 inlines as an
-escape, but one request instead of 75 and nothing to assemble on the page. A small program compiles
-in about a second and emits roughly 70 KB — the JavaScript is pretty-printed, which is what a
-Compiled Code pane wants, and it keeps the output line-oriented.
+About 25 MB of assets, fetched once and cacheable: 2.6 MB for the driver, 5.02 MB for js_of_ocaml,
+0.8 MB of the runtime chunks the compiler looks for while emitting, 5.67 MB for the standard library,
+and 9.6 MB of libraries. The standard library is a single `js_of_ocaml build-fs` artifact carrying all
+its files rather than fetching them one at a time — about 2.6× the size, because a byte above 127
+inlines as an escape, but one request and nothing to assemble on the page. The libraries go the other
+way, as plain files, because only the ones a program names are fetched. A small program compiles in
+about a second and emits roughly 70 KB — the JavaScript is pretty-printed, which is what a Compiled
+Code pane wants, and it keeps the output line-oriented.
 
 ## The interpreter
 
@@ -111,14 +112,19 @@ Two choices worth knowing, since they are choices:
 runtime's filesystem so `open_in "name"` finds them), which `run(code, input, runOptions)` can
 override per run. `compiler.dispose()` stops the worker.
 
-**Libraries load on demand.** A library's `.cma` is fetched and Dynlinked the first time code names
-one of its modules. The archive must be built for the same OCaml version and be pure enough to run in
-a browser — no C stubs, no `Unix`, no threads — so most of opam is out, which is a toolchain step
-rather than something this package can do at runtime.
+**Libraries load on demand.** `assets/interpreter/libs/manifest.txt` says which archive implements
+which modules; when the type-checker asks for an interface the toplevel cannot find, the archive is
+fetched, Dynlinked, and the interface read out of it. A program that names none of them fetches none
+of them. Fifteen libraries are staged: js_of_ocaml's browser runtime (`Js`, `Dom_html`, the web APIs),
+the standard library's own extras (`Str`, `Unix`, `Graphics`), Lwt with `js_of_ocaml-lwt`, pure
+OCaml packages such as `Re`, `uutf`, `jsonm`, `fmt`, `logs`, `base64` and `xmlm`, and a small `greet`
+fixture the Node check uses. An archive must be
+built for the same OCaml version and be pure enough to run in a browser — no C stubs, no threads —
+which is a toolchain step, not something this package can do at runtime.
 
-**No JS interop and no DOM.** The toplevel runs in a Worker, which has no `document` at all, and the
-build exports only the standard library, so `Js` and `Dom_html` are unbound. Use the compiler if you
-want the program to touch the page — that is exactly what it is for.
+**No DOM, though the bindings are there.** The toplevel runs in a Worker, so `Js` and `Dom_html` load
+on demand but there is no `document` to reach through them. `Js` itself works normally. Use the
+compiler if you want the program to touch the page — that is exactly what it is for.
 
 ## Which one
 
@@ -127,7 +133,7 @@ want the program to touch the page — that is exactly what it is for.
 | Result | JavaScript the page runs | Output text, from a program that ran |
 | Page interaction | yes — it *is* JavaScript by then | no |
 | stdin, argv, exit codes | no | yes |
-| Libraries | linked in when compiling | loaded on demand |
+| Libraries | fetched on demand, then linked | fetched on demand, then Dynlinked |
 | Cost per run | ~1 s | instant, incremental |
 
 ## License

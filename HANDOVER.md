@@ -146,24 +146,42 @@ only exist in a page — and that is where the two real harness bugs were found.
   for that alongside the `exit` noise, on the same reasoning: a genuinely fatal load leaves no output
   at all, and that case is reported separately. Verified clean both ways — same-origin, and with the
   page on one port and the assets on another.
-* **Linking is more than `stdlib.cma`.** The driver now links every archive the build
-  lists in `cmas.txt`, and the **order matters**: a library has to come before the archive
+* **Linking is more than `stdlib.cma`.** The driver links every archive it is given through
+  `cmas.txt`, and the **order matters**: a library has to come before the archive
   that references it. Alphabetical order silently broke `js_of_ocaml.cma`, which needs
-  `jsoo_runtime.cma`.
+  `jsoo_runtime.cma`. That list is written per compile now, by the harness, from the archives the
+  page handed over.
 * **`jsoo_runtime.cma` is not at the top of its package** — it is in
-  `js_of_ocaml-compiler/runtime/`, a subdirectory.
+  `js_of_ocaml-compiler/runtime/`, a subdirectory. It is why `js_of_ocaml` is one group with two
+  directories rather than two groups.
 * **Bytecode linking checks that each archive's stub library exists**, even though
   js_of_ocaml implements those primitives in JavaScript. The `.so` files are staged at
   `/static` from findlib's stublibs and the standard library's own; they are found, never run.
+  They are small, so the page always fetches them instead of grouping them with a library.
 * **`opam install` can be satisfied from its binary cache**, which leaves nothing unpacked
   in `sources/` — and the findlib opt-out edits a dune file there. The build fetches them if
   they are missing.
 * **The libraries ship as plain files, not inside the filesystem artifact.** They are
   binary, and `build-fs` escapes every byte above 127, which took 12 MB of archives to
-  31 MB of text. They are fetched by the worker itself (see `mountLibraries` in
-  `src/compiler/worker.js`), which keeps them as they are on disk — 9.6 MB — and the
-  browser caches them, so every compile after the first is a cache read. `stdlib.js` is
-  back to 5.7 MB.
+  31 MB of text. Fetched, they stay as they are on disk: `stdlib.js` 5.67 MB, the libraries
+  9.6 MB, and the browser caches them.
+* **A worker created from a data URL has an opaque origin, so it cannot fetch.** The compiler's
+  harness used to fetch the library files itself and got `Failed to fetch` for every one: the
+  request goes to an origin the worker does not share, and CORS does not help, because it is a
+  request the browser refuses to make. The *page* fetches now — it is same-origin — and passes the
+  contents over. Any fetch added inside that worker later will hit the same wall.
+* **The page fetches what a program names, not everything.** `libs/index.txt` maps a module to the
+  files that implement it. A compile reporting `Unbound module X`, or `No implementation provided
+  for the following modules: Y`, is retried with those files added, and what has been fetched stays
+  in `required` so a session converges. A program using no libraries fetches 13 files where it used
+  to fetch 130.
+* **Two triggers, and the interpreter's is counter-intuitive.** A library is Dynlinked when the
+  type-checker asks for an interface the toplevel *cannot* find. So the libraries' interfaces must
+  **not** be in `stdlib/`: a copy there satisfies the lookup, the trigger never fires, and the
+  phrase fails with *"the interface of a module is loaded, but its implementation is not"*. They are
+  listed in `units.txt` and kept in `libs/`. The compiler's equivalent is the archive half: a
+  library whose archive nothing asks for needs naming in another entry's archive list, which is how
+  `jsoo_runtime.cma` gets loaded.
 * **Watch for the failure you cannot see.** A filtered build log hid a failed step, and a
   "byte-identical, so it works" claim turned out to describe a script that had aborted. Print exit
   codes, read the tail of the output, and re-run rather than infer.

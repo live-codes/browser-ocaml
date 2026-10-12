@@ -14,6 +14,14 @@ FROM ocaml/opam:debian-12-ocaml-${OCAML_VERSION}
 # would drift silently the next time this image is rebuilt.
 ARG JS_OF_OCAML_VERSION=6.4.1
 
+# zarith is arbitrary-precision arithmetic, and it has C stubs, so it needs gmp to build.
+# zarith_stubs_js then replaces those stubs at run time, which is what makes the pair
+# usable in a browser -- but the C half still has to compile first.
+USER root
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends libgmp-dev pkg-config \
+  && rm -rf /var/lib/apt/lists/*
+
 USER opam
 WORKDIR /home/opam/src
 
@@ -34,6 +42,7 @@ RUN opam install -y dune \
   xmlm \
   lwt \
   js_of_ocaml-lwt \
+  zarith \
   zarith_stubs_js \
   digestif
 

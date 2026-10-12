@@ -949,13 +949,64 @@ Note this contract is likely to be replaced by the compile-to-JS one (`{ js, dia
 ## 9. Open questions
 
 1. Does LiveCodes' compile worker allow `importScripts` of a 5.7 MB script, and how do
-   `largeDownload` and CDN caching handle ~14 MB of compiler assets? (§6.5) This is the one question
-   the integration still has to answer, and the reason `largeDownload` is set on the entry.
+   `largeDownload` and CDN caching handle the compiler assets? **Answered**: yes, and it does. The
+   integration works from a CDN, and a worker created from a data URL is what makes that possible —
+   see §10, which also records the trap that comes with it.
 
 Answered since this list was written: `fs_fake` *does* behave the same as `fs_node` for the
 compilers — the whole browser path runs (§3.2); the minimum stdlib set is every `*.cmi` plus
-`stdlib.cma`, `std_exit.cmo` and `runtime-launch-info`, now 75 files / 5.94 MB (§3); and a
-js_of_ocaml program cannot be reused once it has run, so it is one worker per compile (§3.3).
+`stdlib.cma`, `std_exit.cmo` and `runtime-launch-info` (§3); and a js_of_ocaml program cannot be
+reused once it has run, so it is one worker per compile (§3.3).
 
 The "first ship" question is settled as well: compile-to-JS is the language, and the interpreter
 ships alongside it behind its own entry point.
+
+---
+
+## 10. Libraries, lazily
+
+Nothing is fetched until a program names it. Each implementation answers that question its own way,
+because neither can ask the other's.
+
+**The interpreter** ships every library's `.cma` and `.cmi` in `assets/interpreter/libs/`, plus
+`stdlib/units.txt` listing the interfaces and `libs/manifest.txt` mapping library → archive →
+interfaces. It overrides `Persistent_env.Persistent_signature.load`, and the type-checker asking for
+an interface it cannot find *is* the signal: fetch the archive, Dynlink it, read the interface out of
+it.
+
+**The trigger is the counter-intuitive part.** Because it only fires on a *miss*, the libraries'
+interfaces must **not** be in `stdlib/`. Copying them there — which is what the build did — satisfies
+the lookup, so the archive is never Dynlinked and the phrase fails with *"the interface of a module is
+loaded, but its implementation is not"*. That is what that message means. They are listed in
+`units.txt` and kept in `libs/`.
+
+An archive may also need another loaded first. `js_of_ocaml.cma` references `jsoo_runtime`, whose
+interfaces nothing ever asks for, so a manifest entry's archive field is a list loaded in order, and
+`js_of_ocaml` names `jsoo_runtime.cma` first.
+
+**The compiler** has no such hook, so it uses the compiler's own errors: `libs/index.txt` maps a
+module to the files that implement it, and a compile that reports `Unbound module X`, or `No
+implementation provided for the following modules: Y`, is retried with those files added. `required`
+remembers them, so a session converges. A program using no libraries fetches 13 files; one that opens
+`Js_of_ocaml` and uses `Re` fetches 38 and 2 on demand. Measured: 655 ms and 1728 ms.
+
+Two rules fell out of this that are easy to violate later:
+
+- **The page fetches the library files, not the worker.** A worker created from a data URL — which is
+  how the compiler runs from a CDN — has an opaque origin, so its own fetches are refused with
+  `Failed to fetch`, even same-origin ones the page can make perfectly well.
+- **The link list is per compile.** The harness writes `cmas.txt` from the archives it was handed, in
+  order: `stdlib.cma`, then `jsoo_runtime.cma`, then the rest.
+
+### Zarith
+
+Arbitrary-precision arithmetic, and the one library here whose OCaml half is not enough: `zarith.cma`
+calls C stubs, and `zarith_stubs_js` implements them in a `runtime.js` that has to reach whatever runs
+the code. `jsoo_runtime` is how findlib says that, and a js_of_ocaml build reads it — which is why the
+interpreter links `zarith_stubs_js` in `src/dune` for its runtime alone, and why the compiler prepends
+a staged `libs/zarith_stubs_js.runtime.js` to any program that linked `zarith.cma`.
+
+The image needed `libgmp-dev` before any of it could build: zarith's stubs are C, and `opam install
+zarith` fails without gmp, which is why only `zarith_stubs_js` was ever present. **Not yet verified end
+to end** — the Dockerfile and the staging scripts are updated, but the image has to be rebuilt before a
+`Z` program can be compiled or run, and that rebuild is what will confirm this.

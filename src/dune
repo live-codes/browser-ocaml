@@ -12,6 +12,10 @@
   js_of_ocaml
   js_of_ocaml-toplevel
   js_of_ocaml-compiler.dynlink
+  ;; Only for its JavaScript runtime. Zarith's primitives are C stubs, and this
+  ;; package implements them in JS; linking it here puts them in the toplevel, so a
+  ;; phrase that uses Z can be Dynlinked and then actually run.
+  zarith_stubs_js
   compiler-libs.common)
  (link_flags
   (-linkall)))

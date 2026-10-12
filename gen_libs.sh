@@ -62,7 +62,8 @@ fi
 for pkg in \
   str unix graphics \
   js_of_ocaml js_of_ocaml-lwt lwt \
-  re uutf jsonm fmt logs base64 xmlm digestif; do
+  re uutf jsonm fmt logs base64 xmlm digestif \
+  zarith zarith_stubs_js; do
   dir=$(opam exec -- ocamlfind query "$pkg" 2>&1) || dir=""
   [ -d "$dir" ] || continue
   for cma in "$dir"/*.cma; do

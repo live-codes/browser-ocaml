@@ -33,6 +33,10 @@ all. One worker per step, because a js_of_ocaml program runs its main on load an
 is written to disk: every file crosses through a virtual filesystem, and the result comes back on
 stdout.
 
+Libraries are fetched on demand. `libs/index.txt` maps a module to the files that implement it, and a
+compile that cannot find a module is retried with those files added — so a program pays only for what
+it names, not for the whole library directory.
+
 What it deliberately does *not* give you: no stdin, no `Sys.argv`, no exit code, because the
 compiled program runs in the page rather than as a process. That is the trade for page interaction —
 the program *is* JavaScript by the time it runs.

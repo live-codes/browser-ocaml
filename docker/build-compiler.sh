@@ -172,6 +172,17 @@ done
 add_group js_of_ocaml \
   "$(opam exec -- ocamlfind query js_of_ocaml 2>&1)" \
   "$(opam exec -- ocamlfind query js_of_ocaml-compiler 2>&1)/runtime"
+# zarith is arbitrary-precision arithmetic. Its archive is OCaml, but its primitives are
+# C stubs -- zarith_stubs_js implements those, in a runtime.js that has to reach the
+# emitted program. It is copied out beside the libraries so the page can prepend it; see
+# where compile.js does that, and note that the OCaml half is useless without it.
+add_group zarith "$(opam exec -- ocamlfind query zarith 2>&1)"
+add_group zarith_stubs_js "$(opam exec -- ocamlfind query zarith_stubs_js 2>&1)"
+stubs_dir=$(opam exec -- ocamlfind query zarith_stubs_js 2>&1) || stubs_dir=""
+if [ -f "$stubs_dir/runtime.js" ]; then
+  cp "$stubs_dir/runtime.js" "$out/libs/zarith_stubs_js.runtime.js"
+  echo "    zarith_stubs_js: runtime.js staged for the page to prepend"
+fi
 # Bytecode linking checks that each archive's stub library exists, though the
 # implementation of those primitives comes from js_of_ocaml's JavaScript runtime and
 # never from the .so. This build looks for them at /static; they are there to be

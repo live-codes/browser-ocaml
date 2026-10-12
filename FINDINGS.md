@@ -846,7 +846,7 @@ string[]` is rendered into the Console pane as `[LanguageTitle] <error>` (`core.
 | Thing | Fact |
 | --- | --- |
 | `{{hash:…}}` | build-time rewrite by `scripts/hash.js`; a new language script must be added to `scripts/build.js`'s IIFE entry points or the file will not exist |
-| `vendors.ts` | `getUrl('@live-codes/ocaml@0.1.0/')` → jsDelivr; **requires publishing to npm**, and so a `license` |
+| `vendors.ts` | `getUrl('@live-codes/ocaml@0.2.0/')` → jsDelivr; **requires publishing to npm**, and so a `license` |
 | `largeDownload: true` | one info toast (`core.ts:844-854`); no progress bar |
 | progress | only `parent.postMessage({ type: 'loading', payload: bool })`; no byte-level API |
 | worker lifecycle | the compiler worker is created once and never terminated; wasm languages with `liveReload` rewrite the result iframe |

@@ -1,6 +1,6 @@
 {
   "name": "@live-codes/ocaml",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Run OCaml in the browser with no server: a compiler that emits JavaScript, and a toplevel that runs OCaml directly",
   "repository": {
     "type": "git",

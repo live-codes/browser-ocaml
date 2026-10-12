@@ -144,6 +144,12 @@ add_group() {
     for f in "$dir"/*.cmi "$dir"/*.cma; do
       [ -f "$f" ] || continue
       n=$(basename "$f")
+      # A toplevel-support archive shares its directory with the real one and declares the
+      # same interfaces -- zarith_top against zarith. Both would then be indexed under those
+      # names, and since naming any module fetches a group's whole file list, the archive
+      # that merely *depends* on the library would be dragged in with it. Nothing here wants
+      # a toplevel printer, and loading one alone fails.
+      case "$n" in *_top.cma) continue ;; esac
       cp "$f" "$out/libs/$n"
       printf '%s\n' "$n" >> /tmp/fs-group
       printf '/stdlib/%s\t%s\n' "$n" "$n" >> "$out/libs/manifest.txt"
@@ -172,16 +178,16 @@ done
 add_group js_of_ocaml \
   "$(opam exec -- ocamlfind query js_of_ocaml 2>&1)" \
   "$(opam exec -- ocamlfind query js_of_ocaml-compiler 2>&1)/runtime"
-# zarith is arbitrary-precision arithmetic. Its archive is OCaml, but its primitives are
-# C stubs -- zarith_stubs_js implements those, in a runtime.js that has to reach the
-# emitted program. It is copied out beside the libraries so the page can prepend it; see
-# where compile.js does that, and note that the OCaml half is useless without it.
+# zarith is arbitrary-precision arithmetic. Its archive is OCaml; its primitives are C stubs,
+# and zarith_stubs_js implements those in a runtime.js that has to reach the emitted program
+# as a *link input* -- see where compile.js names it on js_of_ocaml's command line. The
+# zarith_stubs_js archive and interface are deliberately not staged: no program names that
+# module, the chunk carries the implementations, and a compile was verified without them.
 add_group zarith "$(opam exec -- ocamlfind query zarith 2>&1)"
-add_group zarith_stubs_js "$(opam exec -- ocamlfind query zarith_stubs_js 2>&1)"
-stubs_dir=$(opam exec -- ocamlfind query zarith_stubs_js 2>&1) || stubs_dir=""
+stubs_dir=$(opam exec -- ocamlfind query zarith_stubs_js 2>/dev/null) || stubs_dir=""
 if [ -f "$stubs_dir/runtime.js" ]; then
   cp "$stubs_dir/runtime.js" "$out/libs/zarith_stubs_js.runtime.js"
-  echo "    zarith_stubs_js: runtime.js staged for the page to prepend"
+  echo "    zarith_stubs_js: runtime.js staged as a js_of_ocaml link input"
 fi
 # Bytecode linking checks that each archive's stub library exists, though the
 # implementation of those primitives comes from js_of_ocaml's JavaScript runtime and

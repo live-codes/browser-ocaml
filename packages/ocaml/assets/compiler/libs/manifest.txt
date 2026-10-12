@@ -118,9 +118,6 @@
 /stdlib/q.cmi	q.cmi
 /stdlib/z.cmi	z.cmi
 /stdlib/zarith.cma	zarith.cma
-/stdlib/zarith_top.cma	zarith_top.cma
-/stdlib/zarith_stubs_js.cmi	zarith_stubs_js.cmi
-/stdlib/zarith_stubs_js.cma	zarith_stubs_js.cma
 /static/dlldigestif_c_stubs.so	dlldigestif_c_stubs.so
 /static/dllgraphics_js_stubs.so	dllgraphics_js_stubs.so
 /static/dllgraphics_stubs.so	dllgraphics_stubs.so

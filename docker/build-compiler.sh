@@ -27,6 +27,13 @@ switch=$(opam var prefix)
 jsoo_version=$(opam list --installed --short --columns=version js_of_ocaml-compiler)
 jsoo_src="$switch/.opam-switch/sources/js_of_ocaml-compiler.$jsoo_version"
 if [ ! -d "$jsoo_src" ]; then
+  # opam can satisfy an install from its binary cache, and then nothing is unpacked
+  # into sources/. The findlib opt-out below edits that dune file, so fetch them.
+  echo "    no sources unpacked; fetching js_of_ocaml-compiler $jsoo_version"
+  opam source "js_of_ocaml-compiler.$jsoo_version" --dir="$jsoo_src" > /tmp/opam-source.log 2>&1 || \
+    cat /tmp/opam-source.log >&2
+fi
+if [ ! -d "$jsoo_src" ]; then
   echo "ERROR: no js_of_ocaml-compiler $jsoo_version sources at $jsoo_src" >&2
   echo "       opam keeps them once it has built the package. What is there:" >&2
   ls "$switch/.opam-switch/sources/" >&2 || true
@@ -88,31 +95,87 @@ opam exec -- js_of_ocaml compile --target-env=browser --dynlink \
   _build/default/tools/compile-stdout/compile_stdout.bc \
   -o "$out/compile_stdout.browser.js"
 
-echo "==> The standard library the compilers open"
-# One artifact, not 71 files. `js_of_ocaml build-fs` writes a script that
-# registers each file in the pseudo filesystem -- through `jsoo_create_file`
-# when a runtime is already up, or by queueing on `jsoo_fs_tmp` when not, which
-# is exactly what the worker harness seeds. So the worker mounts it with
-# `importScripts` before the compiler program, and the program's runtime replays
-# the queue as it starts; nothing in JavaScript has to assemble the set.
+echo "==> The standard library, as one filesystem artifact"
+# `js_of_ocaml build-fs` writes a script that registers files in the pseudo
+# filesystem -- through `jsoo_create_file` when a runtime is already up, or by
+# queueing on `jsoo_fs_tmp` when not, which is exactly what the worker harness
+# seeds. So the worker mounts it with `importScripts` before the compiler program,
+# and the program's runtime replays the queue as it starts; nothing in JavaScript
+# has to assemble the set.
 #
 # Contents are inlined as bytestrings (`Native_string.of_bytestring`), which is
 # byte-exact for a .cmi -- the trap here is a text decoding, and browsers alias
 # both "latin1" and "iso-8859-1" to windows-1252, which remaps 0x80-0x9F and
 # reads back as "Corrupted compiled interface".
 #
-# The set is every *.cmi (68), which the type-checker looks up by module name,
-# plus the three the linker reads: stdlib.cma, std_exit.cmo and
-# runtime-launch-info. Registration is flat, at /stdlib, and the driver is told
-# so through OCAMLLIB.
-rm -rf "$out/stdlib"
-set --
+# Registration is flat, at /stdlib, and the driver is told so through OCAMLLIB.
+rm -rf "$out/stdlib" "$out/libs"
+mkdir -p "$out/libs"
+: > /tmp/fs-args
 for f in "$ocamllib"/*.cmi "$ocamllib"/stdlib.cma "$ocamllib"/std_exit.cmo "$ocamllib"/runtime-launch-info; do
   n=$(basename "$f")
-  set -- "$@" "$n:/stdlib/$n"
+  printf '%s:/stdlib/%s\n' "$n" "$n" >> /tmp/fs-args
 done
-opam exec -- js_of_ocaml build-fs -I "$ocamllib" -o "$out/stdlib.js" "$@"
+set --
+while IFS= read -r arg; do set -- "$@" "$arg"; done < /tmp/fs-args
+opam exec -- js_of_ocaml build-fs -I "$ocamllib" "$@" -o "$out/stdlib.js"
 echo "    $# files -> $(wc -c < "$out/stdlib.js") bytes"
+
+echo "==> The libraries the compiler can link"
+# Plain files, fetched by the worker itself, listed in a manifest. They are binary,
+# and the artifact the standard library uses escapes every byte above 127 -- which
+# turned 12 MB of archives into 31 MB of text. Fetched, they stay as they are on
+# disk, and the browser caches them, so every compile after the first is a cache read.
+#
+# What goes in: js_of_ocaml's browser runtime, with Js, Dom_html and the web APIs;
+# the standard library's own extras, Str and Unix and Graphics; and the pure-OCaml
+# packages baked into the image. Each is taken from its own findlib directory, not
+# its dependency tree -- which for js_of_ocaml alone is tens of megabytes of
+# interfaces no program of ours will ever name.
+: > /tmp/fs-cmas
+: > "$out/libs/manifest.txt"
+add_lib_dir() {
+  [ -d "$1" ] || return 0
+  for f in "$1"/*.cmi "$1"/*.cma; do
+    [ -f "$f" ] || continue
+    n=$(basename "$f")
+    cp "$f" "$out/libs/$n"
+    printf '/stdlib/%s\t%s\n' "$n" "$n" >> "$out/libs/manifest.txt"
+    case "$n" in *.cma) printf '%s\n' "$n" >> /tmp/fs-cmas ;; esac
+  done
+}
+for pkg in \
+  str unix graphics \
+  js_of_ocaml js_of_ocaml-lwt lwt \
+  re uutf jsonm fmt logs base64 xmlm zarith zarith_stubs_js digestif; do
+  add_lib_dir "$(opam exec -- ocamlfind query "$pkg" 2>&1)"
+done
+# js_of_ocaml.cma references Jsoo_runtime, which is in a subdirectory of the compiler
+# package rather than at its top level.
+add_lib_dir "$(opam exec -- ocamlfind query js_of_ocaml-compiler 2>&1)/runtime"
+# Bytecode linking checks that each archive's stub library exists, though the
+# implementation of those primitives comes from js_of_ocaml's JavaScript runtime and
+# never from the .so. This build looks for them at /static; they are there to be
+# found, not to be run. Two places ship them: findlib's own stublibs, and the ones
+# that come with the standard library (Str, Unix).
+for stubdir in "$(opam var lib)/stublibs" "$ocamllib/stublibs"; do
+  [ -d "$stubdir" ] || continue
+  for f in "$stubdir"/*.so; do
+    [ -f "$f" ] || continue
+    n=$(basename "$f")
+    cp "$f" "$out/libs/$n"
+    printf '/static/%s\t%s\n' "$n" "$n" >> "$out/libs/manifest.txt"
+  done
+done
+# What the linker links, and the *order* matters: a library has to come before the
+# archive that references it. stdlib first, because that is where a program's runtime
+# starts, then js_of_ocaml's runtime, then the rest sorted so the list does not churn
+# between builds.
+printf 'stdlib.cma\n' > "$out/libs/cmas.txt"
+printf 'jsoo_runtime.cma\n' >> "$out/libs/cmas.txt"
+sort -u /tmp/fs-cmas | grep -v -e '^stdlib\.cma$' -e '^jsoo_runtime\.cma$' >> "$out/libs/cmas.txt" || true
+printf '/stdlib/cmas.txt\tcmas.txt\n' >> "$out/libs/manifest.txt"
+echo "    $(grep -c . "$out/libs/manifest.txt") files, $(grep -c . "$out/libs/cmas.txt") libraries"
 
 echo "==> The worker harness"
 cp packages/ocaml/src/compiler/worker.js "$out/worker.js"

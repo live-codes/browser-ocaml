@@ -1,0 +1,16 @@
+stdlib.cma
+jsoo_runtime.cma
+base64.cma
+fmt.cma
+graphics.cma
+js_of_ocaml.cma
+js_of_ocaml_lwt.cma
+jsonm.cma
+logs.cma
+lwt.cma
+re.cma
+str.cma
+unix.cma
+uutf.cma
+xmlm.cma
+zarith_stubs_js.cma

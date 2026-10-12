@@ -11,7 +11,7 @@
 
 const lines = (text) => text.split('\n').filter((line) => line.trim() !== '');
 
-// Two kinds of upstream noise reach the worker's stderr, and neither says anything
+// Three kinds of upstream noise reach the worker's stderr, and none says anything
 // about the program being compiled:
 //
 //  - js_of_ocaml is a command-line program and calls `exit` after writing its
@@ -23,8 +23,12 @@ const lines = (text) => text.split('\n').filter((line) => line.trim() !== '');
 //    same-origin. It falls back to the files it was handed and the bundle is
 //    correct. A genuinely fatal load leaves no output at all, and that is reported
 //    separately by `compile`.
+//  - js_of_ocaml warns when it cannot represent an integer exactly, and does so
+//    about its own generated runtime rather than about the program. It is filtered
+//    on request; the cost is that a program relying on such an integer will not see
+//    it either.
 const PHANTOM =
-	/Function 'exit' not implemented|Failed to execute 'importScripts'|^Uncaught NetworkError:/;
+	/Function 'exit' not implemented|Failed to execute 'importScripts'|^Uncaught NetworkError:|Warning \[integer-overflow\]/;
 const diagnosticsOf = (text) => lines(text).filter((line) => !PHANTOM.test(line));
 
 // Byte-for-byte, and deliberately not TextDecoder: in browsers "latin1" and
@@ -63,7 +67,7 @@ const toDataUrl = (content, type = 'text/javascript') =>
 const workerDataUrlFor = (script) =>
 	toDataUrl(`importScripts(${JSON.stringify(String(script))});`);
 
-async function runInWorker(baseUrl, script, files, env, argv, fs = []) {
+async function runInWorker(baseUrl, script, files, env, argv, fs = [], libs) {
 	const worker = new Worker(workerDataUrlFor(new URL('worker.js', baseUrl).href));
 	return new Promise((resolve, reject) => {
 		worker.onmessage = (event) => {
@@ -74,7 +78,7 @@ async function runInWorker(baseUrl, script, files, env, argv, fs = []) {
 			worker.terminate();
 			reject(new Error(event.message || 'the compiler worker failed to load'));
 		};
-		worker.postMessage({ script, files, env, argv, fs });
+		worker.postMessage({ script, files, env, argv, fs, libs });
 	});
 }
 
@@ -135,14 +139,17 @@ export async function compile(source, { baseUrl, driver = 'compile_stdout.browse
 	const runtimeFiles = await loadRuntime(baseUrl);
 	const files = [{ name: 'main.ml', content: source }, ...runtimeFiles];
 
-	// Source -> bytecode, as hex.
+	// Source -> bytecode, as hex. The library files are fetched by the worker itself,
+	// from this manifest -- one request each, from the browser's cache after the
+	// first compile. The bytecode -> JavaScript step needs none of them.
 	const front = await runInWorker(
 		baseUrl,
 		new URL(driver, baseUrl).href,
 		files,
 		{ OCAMLLIB: STDLIB_DIR },
 		['node', 'compile_stdout', 'main.ml'],
-		[new URL(stdlib, baseUrl).href]
+		[new URL(stdlib, baseUrl).href],
+		new URL('libs/manifest.txt', baseUrl).href
 	);
 	const diagnostics = diagnosticsOf(front.err.join('\n'));
 	// The driver prints its hex with no newlines anywhere, so its chunks are

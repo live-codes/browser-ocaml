@@ -146,6 +146,24 @@ only exist in a page — and that is where the two real harness bugs were found.
   for that alongside the `exit` noise, on the same reasoning: a genuinely fatal load leaves no output
   at all, and that case is reported separately. Verified clean both ways — same-origin, and with the
   page on one port and the assets on another.
+* **Linking is more than `stdlib.cma`.** The driver now links every archive the build
+  lists in `cmas.txt`, and the **order matters**: a library has to come before the archive
+  that references it. Alphabetical order silently broke `js_of_ocaml.cma`, which needs
+  `jsoo_runtime.cma`.
+* **`jsoo_runtime.cma` is not at the top of its package** — it is in
+  `js_of_ocaml-compiler/runtime/`, a subdirectory.
+* **Bytecode linking checks that each archive's stub library exists**, even though
+  js_of_ocaml implements those primitives in JavaScript. The `.so` files are staged at
+  `/static` from findlib's stublibs and the standard library's own; they are found, never run.
+* **`opam install` can be satisfied from its binary cache**, which leaves nothing unpacked
+  in `sources/` — and the findlib opt-out edits a dune file there. The build fetches them if
+  they are missing.
+* **The libraries ship as plain files, not inside the filesystem artifact.** They are
+  binary, and `build-fs` escapes every byte above 127, which took 12 MB of archives to
+  31 MB of text. They are fetched by the worker itself (see `mountLibraries` in
+  `src/compiler/worker.js`), which keeps them as they are on disk — 9.6 MB — and the
+  browser caches them, so every compile after the first is a cache read. `stdlib.js` is
+  back to 5.7 MB.
 * **Watch for the failure you cannot see.** A filtered build log hid a failed step, and a
   "byte-identical, so it works" claim turned out to describe a script that had aborted. Print exit
   codes, read the tail of the output, and re-run rather than infer.

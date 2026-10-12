@@ -84,8 +84,22 @@ let () =
      (* Absolute paths, because Bytelink resolves its arguments through Load_path
         and a bare "main.cmo" was not being found there even with "." on the path. *)
      let abs p = if Filename.is_relative p then Filename.concat (Sys.getcwd ()) p else p in
-     (try Bytelink.link [ abs (Filename.concat stdlib_dir "stdlib.cma"); abs cmo ] (abs byte) with
-      | exn -> fail exn);
+     (* Every library the compiler ships gets linked, not just the standard library.
+        Bytelink pulls in only the units the program actually reaches, so naming a
+        library the program never uses costs nothing in the output -- and it is what
+        lets a program use js_of_ocaml's Js and Dom_html, or Str, or Zarith.
+        `cmas.txt` is written by the build, stdlib first; without it, stdlib alone. *)
+     let libraries () =
+       let manifest = Filename.concat stdlib_dir "cmas.txt" in
+       let names =
+         match (try Some (read_file manifest) with _ -> None) with
+         | None -> [ "stdlib.cma" ]
+         | Some text ->
+             List.filter (fun n -> n <> "") (List.map String.trim (String.split_on_char '\n' text))
+       in
+       List.map (fun n -> abs (Filename.concat stdlib_dir n)) names
+     in
+     (try Bytelink.link (libraries () @ [ abs cmo ]) (abs byte) with exn -> fail exn);
      print_string (hex_of_string (read_file byte))
    with
    | Failed -> ()

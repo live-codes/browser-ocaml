@@ -18,8 +18,27 @@ USER opam
 WORKDIR /home/opam/src
 
 # Bake the OCaml dependencies into the image so rebuilds are fast.
+#
+# js_of_ocaml is the compiler and its browser runtime -- Js, Dom_html and the rest
+# of the web APIs. The others are pure-OCaml libraries a browser can actually run:
+# no C stubs anywhere, or (for Zarith) a JavaScript replacement for them.
 RUN opam install -y dune \
   js_of_ocaml.${JS_OF_OCAML_VERSION} \
-  js_of_ocaml-toplevel.${JS_OF_OCAML_VERSION}
+  js_of_ocaml-toplevel.${JS_OF_OCAML_VERSION} \
+  re \
+  uutf \
+  jsonm \
+  fmt \
+  logs \
+  base64 \
+  xmlm \
+  lwt \
+  js_of_ocaml-lwt \
+  zarith_stubs_js \
+  digestif
+
+# Kept separate: `graphics` is the one package here that is not pure OCaml, so a
+# failure to build it should not take the rest of the image with it.
+RUN opam install -y graphics
 
 CMD ["sh", "docker/build.sh"]
